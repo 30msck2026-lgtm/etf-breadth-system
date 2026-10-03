@@ -37,14 +37,18 @@ def load_dashboard_data():
     df_metrics = pd.read_sql(q_metrics, conn)
     df_macro = pd.read_sql("SELECT * FROM macro_breadth ORDER BY date ASC", conn)
     
-    # 查詢 11 大板塊母 ETF 當日資金流向
+    # 修正：JOIN etf_metadata meta 以獲取 name 欄位，徹底解決 OperationalError
     sectors_q = f"""
-    SELECT symbol, name, close_price, pct_change, momentum_5d, dist_20ma
-    FROM market_daily_metrics 
-    WHERE symbol IN ('XLK','XLV','XLF','XLI','XLY','XLP','XLE','XLB','XLU','XLRE','XLC') 
-      AND date = '{latest_date}'
+    SELECT m.symbol, meta.name, m.close_price, m.pct_change, m.momentum_5d, m.dist_20ma
+    FROM market_daily_metrics m
+    JOIN etf_metadata meta ON m.symbol = meta.symbol
+    WHERE m.symbol IN ('XLK','XLV','XLF','XLI','XLY','XLP','XLE','XLB','XLU','XLRE','XLC') 
+      AND m.date = '{latest_date}'
     """
-    df_sectors = pd.read_sql(sectors_q, conn)
+    try:
+        df_sectors = pd.read_sql(sectors_q, conn)
+    except:
+        df_sectors = None
     
     # 讀取「財報日更新表」專用數據
     try:
@@ -71,7 +75,7 @@ with top_col2:
 df_metrics, df_macro, df_sectors, df_sync, df_logs, latest_date = load_dashboard_data()
 
 # =========================================================================
-# 🌟 用戶專屬指定區塊：【財報日更新表】(ETF 成分股組成更新狀態與下載成功監控)
+# 🌟 【財報日更新表】(ETF 成分股組成更新狀態與下載成功監控)
 # =========================================================================
 st.markdown("## 📋 財報日更新表")
 if df_sync is not None and not df_sync.empty:
@@ -85,19 +89,13 @@ if df_sync is not None and not df_sync.empty:
         "download_success": "是否成功下載官方檔案",
         "source_note": "數據源備註"
     })
-    
-    # 格式化呈現
-    st.dataframe(
-        disp_sync,
-        use_container_width=True,
-        height=220
-    )
+    st.dataframe(disp_sync, use_container_width=True, height=220)
 else:
     st.info("ℹ️ 正在建立更新狀態記錄...")
 
 st.markdown("---")
 
-# 系統健康檢查日誌 (若有異常提示)
+# 系統健康檢查日誌
 if df_logs is not None and not df_logs.empty:
     err_logs = df_logs[df_logs["status"].isin(["WARNING", "ERROR"])]
     if not err_logs.empty:
