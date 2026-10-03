@@ -31,14 +31,24 @@ def update_macro_breadth(conn, today_str):
     for idx_name, url in indices_urls.items():
         tickers = []
         try:
-            # 必須帶標準 User-Agent 請求 Wikipedia，防止 403 Forbidden 封鎖！
             resp = requests.get(url, headers=HEADERS, timeout=12)
             if resp.status_code == 200:
                 tables = pd.read_html(io.StringIO(resp.text))
-                if idx_name == "S&P 500":
-                    tickers = tables[0]["Symbol"].str.replace(".", "-", regex=False).tolist()
-                else:
-                    tickers = tables[4]["Ticker"].str.replace(".", "-", regex=False).tolist() if len(tables) > 4 else tables[3]["Ticker"].str.replace(".", "-", regex=False).tolist()
+                target_table = None
+                for t in tables:
+                    cols = [str(c).lower() for c in t.columns]
+                    if any("symbol" in c or "ticker" in c for c in cols):
+                        target_table = t
+                        break
+                if target_table is not None:
+                    col_name = None
+                    for c in target_table.columns:
+                        if "symbol" in str(c).lower() or "ticker" in str(c).lower():
+                            col_name = c
+                            break
+                    if col_name is not None:
+                        tickers = target_table[col_name].astype(str).str.replace(".", "-", regex=False).tolist()
+                        tickers = [t.strip() for t in tickers if len(t.strip()) <= 6 and t.strip().isalnum()]
         except Exception as e:
             log_system_event(cur, "PRICE_FETCH", idx_name, "WARNING", f"Wikipedia 讀取受阻: {e}，啟用備用核心池")
             
@@ -160,7 +170,6 @@ def run_daily_pipeline():
                 if len(bench_c) >= 2:
                     ratio_spread = round(float(curr_c / bench_c.iloc[-1]), 4)
                     
-            # 關鍵加固：總成分股必須嚴格以 etf_holdings 資料庫中的實際持股為準！
             sub_stocks = holdings_df[holdings_df["etf_symbol"] == etf]["stock_symbol"].tolist()
             total_cnt = len(sub_stocks)
             
@@ -230,7 +239,7 @@ def run_daily_pipeline():
             
     conn.commit()
     conn.close()
-    print("[+] 每日指標計算完成，所有板塊母基金與細分 ETF 數據吻合！")
+    print("[+] 每日指標計算完成，所有大盤層與 ETF 指標同步完畢！")
 
 if __name__ == "__main__":
     run_daily_pipeline()
