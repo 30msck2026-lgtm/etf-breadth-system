@@ -2,6 +2,7 @@ import datetime
 import time
 import requests
 import io
+import os
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -101,8 +102,8 @@ def run_daily_pipeline():
     
     update_macro_breadth(conn, today_str)
     
-    meta_df = pd.read_sql("SELECT symbol, benchmark FROM etf_metadata", conn)
-    holdings_df = pd.read_sql("SELECT etf_symbol, stock_symbol FROM etf_holdings", conn)
+    meta_df = pd.read_sql("SELECT symbol, name, benchmark FROM etf_metadata", conn)
+    holdings_df = pd.read_sql("SELECT etf_symbol, stock_symbol, weight FROM etf_holdings", conn)
     
     etf_symbols = meta_df["symbol"].tolist()
     benchmarks = [b for b in meta_df["benchmark"].dropna().unique().tolist() if b]
@@ -129,8 +130,11 @@ def run_daily_pipeline():
             log_system_event(cur, "PRICE_FETCH", f"BLOCK_{i}", "WARNING", f"下載塊失敗: {err}")
         time.sleep(3)
             
+    daily_sheet_rows = []
+    
     for _, meta_row in meta_df.iterrows():
         etf = meta_row["symbol"]
+        etf_name = meta_row["name"]
         bench = meta_row["benchmark"]
         try:
             if etf not in raw_dict:
@@ -170,28 +174,44 @@ def run_daily_pipeline():
                 if len(bench_c) >= 2:
                     ratio_spread = round(float(curr_c / bench_c.iloc[-1]), 4)
                     
-            sub_stocks = holdings_df[holdings_df["etf_symbol"] == etf]["stock_symbol"].tolist()
-            total_cnt = len(sub_stocks)
+            sub_df = holdings_df[holdings_df["etf_symbol"] == etf]
+            total_cnt = len(sub_df)
             
             stock_pcts = []
             ab_20 = 0
             ab_50 = 0
             ab_20_prev = 0
             
-            for s in sub_stocks:
+            for rank_idx, (_, s_row) in enumerate(sub_df.iterrows(), 1):
+                s = s_row["stock_symbol"]
+                w_val = s_row["weight"]
+                w_str = f"{round(float(w_val)*100, 2)}%" if pd.notna(w_val) else "--"
+                
+                s_curr = 0.0
+                s_ret = 0.0
+                status_str = "平"
+                is_above_ma20 = "否"
+                
                 if s in raw_dict:
                     s_close = raw_dict[s]["Close"].dropna()
                     if len(s_close) >= 2:
-                        sc = s_close.iloc[-1]
-                        sp = s_close.iloc[-2]
-                        ret = ((sc - sp) / sp) * 100.0
-                        stock_pcts.append(ret)
+                        sc = float(s_close.iloc[-1])
+                        sp = float(s_close.iloc[-2])
+                        s_curr = round(sc, 2)
+                        s_ret = round(((sc - sp) / sp) * 100.0, 2)
+                        stock_pcts.append(s_ret)
                         
+                        if s_ret > 0.05:
+                            status_str = "升"
+                        elif s_ret < -0.05:
+                            status_str = "跌"
+                            
                         if len(s_close) >= 22:
                             m20_curr = s_close.rolling(20).mean().iloc[-1]
                             m20_prev = s_close.rolling(20).mean().iloc[-2]
                             if sc > m20_curr:
                                 ab_20 += 1
+                                is_above_ma20 = "是"
                             if sp > m20_prev:
                                 ab_20_prev += 1
                         if len(s_close) >= 50 and sc > s_close.rolling(50).mean().iloc[-1]:
@@ -200,6 +220,21 @@ def run_daily_pipeline():
                         stock_pcts.append(0.0)
                 else:
                     stock_pcts.append(0.0)
+                    
+                daily_sheet_rows.append({
+                    "記錄基準日期": today_str,
+                    "ETF代號": etf,
+                    "ETF名稱": etf_name,
+                    "ETF現價": round(curr_c, 2),
+                    "ETF當日升幅": f"{pct_change:+.2f}%",
+                    "成分股排名": rank_idx,
+                    "成分股代號": s,
+                    "持股權重": w_str,
+                    "成分股現價": s_curr,
+                    "成分股當日升幅": f"{s_ret:+.2f}%",
+                    "升跌狀態": status_str,
+                    "站上20MA": is_above_ma20
+                })
                     
             arr = np.array(stock_pcts)
             adv_cnt = int(np.sum(arr > 0.05))
@@ -240,6 +275,25 @@ def run_daily_pipeline():
     conn.commit()
     conn.close()
     print("[+] 每日指標計算完成，所有大盤層與 ETF 指標同步完畢！")
+    
+    # 自動輸出 100% 免費的本地 CSV 與 Excel（每日覆蓋最新行情）
+    try:
+        data_dir = os.path.join(os.path.dirname(__file__), "data")
+        os.makedirs(data_dir, exist_ok=True)
+        
+        df_daily = pd.DataFrame(daily_sheet_rows)
+        csv_path = os.path.join(data_dir, "當日行情覆蓋表.csv")
+        df_daily.to_csv(csv_path, index=False, encoding="utf-8-sig")
+        
+        excel_path = os.path.join(data_dir, "ETF_每日數據庫.xlsx")
+        with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+            df_daily.to_excel(writer, sheet_name="當日行情覆蓋表", index=False)
+            holdings_df.to_excel(writer, sheet_name="全量成分股明細", index=False)
+            meta_df.to_excel(writer, sheet_name="財報日更新表", index=False)
+            
+        print(f"[+] 成功輸出每日覆蓋檔案至: {csv_path} 與 {excel_path}！")
+    except Exception as ex:
+        print(f"[-] 每日行情檔案輸出警告: {ex}")
 
 if __name__ == "__main__":
     run_daily_pipeline()

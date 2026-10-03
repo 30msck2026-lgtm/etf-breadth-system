@@ -11,6 +11,8 @@ st.set_page_config(page_title="美股細分行業 ETF 深度監控與轉勢雷�
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_FILE = os.path.join(DATA_DIR, "etf_system.db")
+EXCEL_FILE = os.path.join(DATA_DIR, "ETF_每日數據庫.xlsx")
+CSV_FILE = os.path.join(DATA_DIR, "當日行情覆蓋表.csv")
 
 @st.cache_data(ttl=5)
 def load_dashboard_data():
@@ -37,7 +39,6 @@ def load_dashboard_data():
     df_metrics = pd.read_sql(q_metrics, conn)
     df_macro = pd.read_sql("SELECT * FROM macro_breadth ORDER BY date ASC", conn)
     
-    # 修正：JOIN etf_metadata meta 以獲取 name 欄位，徹底解決 OperationalError
     sectors_q = f"""
     SELECT m.symbol, meta.name, m.close_price, m.pct_change, m.momentum_5d, m.dist_20ma
     FROM market_daily_metrics m
@@ -50,7 +51,6 @@ def load_dashboard_data():
     except:
         df_sectors = None
     
-    # 讀取「財報日更新表」專用數據
     try:
         df_sync = pd.read_sql("SELECT * FROM etf_sync_status ORDER BY symbol ASC", conn)
     except:
@@ -66,11 +66,21 @@ def load_dashboard_data():
 
 st.title("🏛️ 美股細分行業 ETF 深度監控與市場寬度雷達")
 
-top_col1, top_col2 = st.columns([8, 2])
-with top_col2:
+top_col1, top_col2, top_col3 = st.columns([5, 3, 2])
+with top_col3:
     if st.button("🔄 清除快取並重讀資料庫"):
         st.cache_data.clear()
         st.rerun()
+
+with top_col2:
+    if os.path.exists(EXCEL_FILE):
+        with open(EXCEL_FILE, "rb") as f:
+            st.download_button(
+                label="📥 下載今日最新行情 Excel (含三工作表)",
+                data=f,
+                file_name="ETF_每日行情覆蓋數據庫.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 df_metrics, df_macro, df_sectors, df_sync, df_logs, latest_date = load_dashboard_data()
 

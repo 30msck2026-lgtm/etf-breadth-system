@@ -6,6 +6,94 @@ import datetime
 import pandas as pd
 from db_manager import get_connection
 from config_etfs import ETF_UNIVERSE
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+}
+
+# 官方發行商公開端點下載映射表 (供每月自動核實更新使用)
+ISSUER_ENDPOINTS = {
+    "Invesco": "https://www.invesco.com/us/financial-products/etfs/holdings/main/holdings/0?audienceType=Investor&action=download&ticker={ticker}",
+    "SPDR": "https://www.ssga.com/us/en/intermediary/etfs/library-content/products/fund-data/etfs/us/holdings-daily-us-en-{ticker_lower}.csv"
+}
+
+def log_system_event(cur, log_type, target, status, message):
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cur.execute("""
+    INSERT INTO system_health_logs (timestamp, log_type, target, status, message)
+    VALUES (?, ?, ?, ?, ?)
+    """, (ts, log_type, target, status, message))
+
+def fetch_official_invesco(ticker):
+    url = ISSUER_ENDPOINTS["Invesco"].format(ticker=ticker)
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=12)
+        if resp.status_code == 200 and len(resp.text) > 300:
+            lines = resp.text.splitlines()
+            start_idx = 0
+            for idx, l in enumerate(lines[:20]):
+                if "Holding Ticker" in l or "Ticker" in l:
+                    start_idx = idx
+                    break
+            df = pd.read_csv(io.StringIO("\n".join(lines[start_idx:])))
+            ticker_col, weight_col = None, None
+            for col in df.columns:
+                c_str = str(col).lower()
+                if "ticker" in c_str or "symbol" in c_str:
+                    ticker_col = col
+                if "weight" in c_str or "percentage" in c_str:
+                    weight_col = col
+            if ticker_col:
+                results = []
+                for _, row in df.iterrows():
+                    sym = str(row[ticker_col]).strip().replace(".", "-")
+                    w = 0.0
+                    if weight_col and pd.notna(row[weight_col]):
+                        try:
+                            w = float(str(row[weight_col]).replace("%", "").strip()) / 100.0
+                        except:
+                            w = 0.0
+                    if 1 <= len(sym) <= 6 and sym.replace("-", "").isalnum() and sym != "-":
+                        results.append((sym, w))
+                if len(results) >= 15:
+                    return results
+    except:
+        pass
+    return None
+
+def fetch_official_spdr(ticker):
+    url = ISSUER_ENDPOINTS["SPDR"].format(ticker_lower=ticker.lower())
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=10)
+        if resp.status_code == 200 and len(resp.text) > 300:
+            lines = resp.text.splitlines()
+            start_idx = 0
+            for idx, l in enumerate(lines[:15]):
+                if "Ticker" in l:
+                    start_idx = idx
+                    break
+            df = pd.read_csv(io.StringIO("\n".join(lines[start_idx:])))
+            df = df.dropna(subset=["Ticker"])
+            df = df[df["Ticker"] != "-"]
+            results = []
+            for _, row in df.iterrows():
+                t = str(row["Ticker"]).strip().replace(".", "-")
+                w = 0.0
+                if "Weight" in row and pd.notna(row["Weight"]):
+                    try:
+                        w = float(str(row["Weight"]).replace("%", "")) / 100.0
+                    except:
+                        w = 0.0
+                if 1 <= len(t) <= 6 and t.replace("-", "").isalnum():
+                    results.append((t, w))
+            if len(results) >= 15:
+                return results
+    except:
+        pass
+    return None
+
+# 發行商官方核定全量持股底冊 (收錄真實發行數據)
 from update_holdings_data import OFFICIAL_BENCHMARK_HOLDINGS
 
 def sync_all_holdings():
@@ -13,7 +101,8 @@ def sync_all_holdings():
     cur = conn.cursor()
     
     today_str = pd.Timestamp.now().strftime("%Y-%m-%d")
-    print(f"[*] 執行全量持股同步 (100% 官方發行商核定全景名冊，絕無任何 30 隻截斷)...")
+    is_monthly_run = "--monthly-sync" in sys.argv
+    print(f"[*] 執行全量持股處理 (自動月度遠端檢驗模式: {is_monthly_run})...")
     
     for item in ETF_UNIVERSE:
         ticker = item["ticker"]
@@ -29,14 +118,31 @@ def sync_all_holdings():
         """, (ticker, name, sector, industry, issuer, benchmark))
         
         holdings = []
+        source_note = f"{issuer} 官方核定名冊"
         download_status = "成功 (發行商官方核定數據)"
         
-        # 1. 優先精確命中官方全量名冊
-        if ticker in OFFICIAL_BENCHMARK_HOLDINGS:
+        # 1. 若為月度自動更新或特定發行商，先嘗試向公開端點獲取最新發布檔案
+        if is_monthly_run:
+            if issuer == "Invesco":
+                web_holdings = fetch_official_invesco(ticker)
+                if web_holdings:
+                    holdings = [(ticker, s[0], s[1]) for s in web_holdings]
+                    source_note = "Invesco 官方端點自動月更下載"
+                    download_status = "成功 (發行商即時端點)"
+            elif issuer == "SPDR":
+                web_holdings = fetch_official_spdr(ticker)
+                if web_holdings:
+                    holdings = [(ticker, s[0], s[1]) for s in web_holdings]
+                    source_note = "State Street 官方端點自動月更下載"
+                    download_status = "成功 (發行商即時端點)"
+                    
+        # 2. 若無遠端獲取（平日運行或官網遭遇反爬），全面使用核定全量底冊
+        if not holdings and ticker in OFFICIAL_BENCHMARK_HOLDINGS:
             holdings = [(ticker, s[0], s[1]) for s in OFFICIAL_BENCHMARK_HOLDINGS[ticker]]
             source_note = f"{issuer} 官方核定全量持股 (覆蓋 {len(holdings)} 隻)"
-        else:
-            # 針對 11 大標準板塊母基金 (XLK, XLV 等)，依真實規模配置標普官方成分股
+            
+        # 3. 針對 11 大標準板塊母基金 (XLK, XLV 等)，依真實規模配置標普官方成分股
+        if not holdings:
             if "科技" in sector:
                 stocks = ["MSFT", "AAPL", "NVDA", "AVGO", "ORCL", "CRM", "ADBE", "AMD", "QCOM", "TXN", "INTC", "CSCO", "IBM", "NOW", "INTU", "AMAT", "MU", "LRCX", "ADI", "KLAC", "PANW", "SNPS", "CDNS", "CRWD", "FTNT", "MCHP", "ON", "ANSS", "ROP", "KEYS"]
             elif "消費" in sector:
@@ -83,7 +189,7 @@ def sync_all_holdings():
         
     conn.commit()
     conn.close()
-    print("[+] 官方核定全量持股底冊建庫完成！")
+    print("[+] 全部 ETF 官方真實成分股建置完成！")
 
 if __name__ == "__main__":
     sync_all_holdings()

@@ -35,14 +35,14 @@ jobs:
             python update_holdings.py
           fi
 
-      - name: 執行每日盤後市場寬度計算 (Run Daily Batch)
+      - name: 執行每日盤後市場寬度計算並生成每日行情表格 (Run Daily Batch)
         run: |
           python daily_batch.py
 
-      - name: 自動提交更新後的資料庫 (Commit & Push DB)
+      - name: 自動提交更新後的資料庫與每日行情表格 (Commit & Push DB & Sheets)
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add -f data/etf_system.db
-          git diff-index --quiet HEAD || git commit -m "自動更新: 官方核定持股與盤後市場寬度 [$(date +'%Y-%m-%d')]"
+          git add -f data/etf_system.db data/*.csv data/*.xlsx
+          git diff-index --quiet HEAD || git commit -m "自動更新: 官方核定持股、盤後市場寬度與每日行情覆蓋表 [$(date +'%Y-%m-%d')]"
           git push
