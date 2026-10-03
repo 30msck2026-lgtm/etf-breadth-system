@@ -15,18 +15,18 @@ DB_FILE = os.path.join(DATA_DIR, "etf_system.db")
 @st.cache_data(ttl=5)
 def load_dashboard_data():
     if not os.path.exists(DB_FILE):
-        return None, None, None, None, None
+        return None, None, None, None, None, None
     conn = sqlite3.connect(DB_FILE)
     try:
         date_df = pd.read_sql("SELECT MAX(date) as max_date FROM market_daily_metrics", conn)
         latest_date = date_df["max_date"].iloc[0]
     except Exception as e:
         conn.close()
-        return None, None, None, None, None
+        return None, None, None, None, None, None
         
     if not latest_date:
         conn.close()
-        return None, None, None, None, None
+        return None, None, None, None, None, None
         
     q_metrics = f"""
     SELECT m.*, meta.name, meta.sector, meta.sub_industry, meta.benchmark
@@ -37,21 +37,28 @@ def load_dashboard_data():
     df_metrics = pd.read_sql(q_metrics, conn)
     df_macro = pd.read_sql("SELECT * FROM macro_breadth ORDER BY date ASC", conn)
     
+    # 查詢 11 大板塊母 ETF 當日資金流向
     sectors_q = f"""
-    SELECT symbol, close_price, pct_change, momentum_5d, dist_20ma
+    SELECT symbol, name, close_price, pct_change, momentum_5d, dist_20ma
     FROM market_daily_metrics 
     WHERE symbol IN ('XLK','XLV','XLF','XLI','XLY','XLP','XLE','XLB','XLU','XLRE','XLC') 
       AND date = '{latest_date}'
     """
     df_sectors = pd.read_sql(sectors_q, conn)
     
+    # 讀取「財報日更新表」專用數據
+    try:
+        df_sync = pd.read_sql("SELECT * FROM etf_sync_status ORDER BY symbol ASC", conn)
+    except:
+        df_sync = None
+        
     try:
         df_logs = pd.read_sql("SELECT * FROM system_health_logs ORDER BY timestamp DESC LIMIT 15", conn)
     except:
         df_logs = None
         
     conn.close()
-    return df_metrics, df_macro, df_sectors, df_logs, latest_date
+    return df_metrics, df_macro, df_sectors, df_sync, df_logs, latest_date
 
 st.title("🏛️ 美股細分行業 ETF 深度監控與市場寬度雷達")
 
@@ -61,25 +68,48 @@ with top_col2:
         st.cache_data.clear()
         st.rerun()
 
-df_metrics, df_macro, df_sectors, df_logs, latest_date = load_dashboard_data()
+df_metrics, df_macro, df_sectors, df_sync, df_logs, latest_date = load_dashboard_data()
 
-# 系統健康檢查橫幅
+# =========================================================================
+# 🌟 用戶專屬指定區塊：【財報日更新表】(ETF 成分股組成更新狀態與下載成功監控)
+# =========================================================================
+st.markdown("## 📋 財報日更新表")
+if df_sync is not None and not df_sync.empty:
+    st.caption("即時監控 Universe 內各 ETF 官方成分股最近更新日期、是否成功由官方端點下載 CSV 檔案以及底層持股總數：")
+    disp_sync = df_sync.rename(columns={
+        "symbol": "ETF 代號",
+        "name": "ETF 名稱",
+        "issuer": "發行商",
+        "holdings_count": "持股總隻數",
+        "last_updated_date": "最近更新日期",
+        "download_success": "是否成功下載官方檔案",
+        "source_note": "數據源備註"
+    })
+    
+    # 格式化呈現
+    st.dataframe(
+        disp_sync,
+        use_container_width=True,
+        height=220
+    )
+else:
+    st.info("ℹ️ 正在建立更新狀態記錄...")
+
+st.markdown("---")
+
+# 系統健康檢查日誌 (若有異常提示)
 if df_logs is not None and not df_logs.empty:
     err_logs = df_logs[df_logs["status"].isin(["WARNING", "ERROR"])]
     if not err_logs.empty:
-        with st.expander(f"⚠️ 系統偵測到 {len(err_logs)} 項數據抓取警報 (點擊展開查看詳細診斷)", expanded=False):
-            st.caption("以下為後台執行時遭遇的發行商反爬阻擋或個股行情獲取記錄：")
+        with st.expander(f"⚠️ 數據抓取警報診斷中心 (共 {len(err_logs)} 項記錄)", expanded=False):
             st.dataframe(
                 err_logs.rename(columns={"timestamp": "時間", "log_type": "類型", "target": "對象標的", "status": "狀態", "message": "診斷詳情"}),
                 use_container_width=True,
-                height=180
+                height=160
             )
-    else:
-        st.success("🟢 數據源健康檢查：全量持股同步與個股行情獲取狀態良好，無任何異常！")
 
 if df_metrics is None or df_metrics.empty:
-    st.warning("⚠️ 資料庫尚未初始化或正在計算中！")
-    st.info("請在 GitHub Actions 頁面點擊【Run workflow】以執行全量計算。")
+    st.warning("⚠️ 資料庫尚未初始化或正在計算中！請稍候刷新。")
     st.stop()
 
 # ==========================================
@@ -102,13 +132,6 @@ if df_macro is not None and not df_macro.empty:
         else:
             m_cols[2].metric("納指 100 (52週新高 / 新低)", f"{nh} 隻 / {nl} 隻", delta=f"淨新高: {net:+d}")
             m_cols[3].metric("納指 100 站上 50MA 比例", f"{p50}%")
-            
-    if len(df_macro["date"].unique()) > 1:
-        st.caption("📈 S&P 500 & Nasdaq 每日淨新高 (NH - NL) 走勢曲線")
-        fig_macro = px.line(df_macro, x="date", y="net_highs_lows", color="index_name", markers=True)
-        fig_macro.add_hline(y=0, line_dash="dash", line_color="gray")
-        fig_macro.update_layout(height=260, margin=dict(l=20, r=20, t=20, b=20))
-        st.plotly_chart(fig_macro, use_container_width=True)
 
 if df_sectors is not None and not df_sectors.empty:
     st.markdown("#### 🧭 11 大核心板塊 (Sectors) 當日資金流向熱力分佈")
@@ -118,6 +141,7 @@ if df_sectors is not None and not df_sectors.empty:
         color="pct_change",
         color_continuous_scale="RdYlGn",
         text="pct_change",
+        hover_data=["name"],
         labels={"pct_change": "漲跌幅 (%)", "symbol": "板塊 ETF"}
     )
     fig_sector_heat.update_traces(texttemplate="%{text:+.2f}%", textposition="outside")
@@ -130,7 +154,10 @@ st.markdown("---")
 # C. 轉勢雷達 (Reversal Radar)
 # ==========================================
 st.markdown("## 🚨 C. 轉勢雷達 (Reversal Radar)")
-radar_alerts = df_metrics[df_metrics["reversal_signal_flag"] != "常規波動"]
+radar_alerts = df_metrics[
+    (df_metrics["reversal_signal_flag"] != "常規波動") &
+    (~df_metrics["symbol"].isin(['XLK','XLV','XLF','XLI','XLY','XLP','XLE','XLB','XLU','XLRE','XLC']))
+]
 if not radar_alerts.empty:
     alert_cols = st.columns(min(len(radar_alerts), 4))
     for i, (_, r) in enumerate(radar_alerts.head(4).iterrows()):
@@ -170,7 +197,10 @@ divergence_filter = st.sidebar.selectbox("背離與轉勢過濾:", ["全部", "�
 min_adv = st.sidebar.slider("內部最低上漲比例 (%):", 0, 100, 0)
 ma20_bias_range = st.sidebar.slider("距 20MA 偏離範圍 (%):", -20.0, 20.0, (-15.0, 15.0))
 
-view_df = df_metrics[df_metrics["sector"].isin(sel_sectors)]
+view_df = df_metrics[
+    (df_metrics["sector"].isin(sel_sectors)) &
+    (~df_metrics["symbol"].isin(['XLK','XLV','XLF','XLI','XLY','XLP','XLE','XLB','XLU','XLRE','XLC']))
+]
 view_df = view_df[
     (view_df["advancing_ratio"] >= min_adv) &
     (view_df["dist_20ma"] >= ma20_bias_range[0]) &
