@@ -31,7 +31,6 @@ def init_database():
         PRIMARY KEY (etf_symbol, stock_symbol)
     )""")
     
-    # 專門記錄每個 ETF 的更新狀態總表 (供「財報日更新表」查詢)
     cur.execute("""
     CREATE TABLE IF NOT EXISTS etf_sync_status (
         symbol TEXT PRIMARY KEY,
@@ -94,4 +93,4 @@ def init_database():
 
 if __name__ == "__main__":
     init_database()
-    print("Database initialized successfully with etf_sync_status.")
+    print("Database initialized successfully.")

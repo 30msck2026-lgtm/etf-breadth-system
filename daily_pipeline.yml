@@ -2,7 +2,10 @@ name: Daily ETF Data Pipeline
 
 on:
   schedule:
+    # 平日盤後計算 (星期一至五 UTC 21:30)
     - cron: '30 21 * * 1-5'
+    # 每月 1 號發起發行商官網連線檢查 (每月 1 號 UTC 01:00)
+    - cron: '0 1 1 * *'
   workflow_dispatch:
 
 jobs:
@@ -24,7 +27,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 初始化資料庫並寫入全量持股 (Init DB & Holdings)
+      - name: 載入發行商官方核定全量持股 (Load Official Benchmark Holdings)
         run: |
           mkdir -p data
           python db_manager.py
@@ -39,5 +42,5 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add -f data/etf_system.db
-          git diff-index --quiet HEAD || git commit -m "自動更新: 官方成分股與盤後市場寬度 [$(date +'%Y-%m-%d')]"
+          git diff-index --quiet HEAD || git commit -m "自動更新: 官方核定持股與盤後市場寬度 [$(date +'%Y-%m-%d')]"
           git push
