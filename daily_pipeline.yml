@@ -2,9 +2,7 @@ name: Daily ETF Data Pipeline
 
 on:
   schedule:
-    # 1. 每日排程: 星期一至五 UTC 21:30 (美股盤後) 自動計算市場寬度
     - cron: '30 21 * * 1-5'
-    # 2. 每月排程: 每月 1 號 UTC 01:00 自動聯動發行商公開端點核實成分股更新
     - cron: '0 1 1 * *'
   workflow_dispatch:
 
@@ -27,11 +25,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 執行官方持股同步與月度校驗 (Sync Official Holdings)
+      - name: 載入發行商官方核定全量持股 (Load Official Benchmark Holdings)
         run: |
           mkdir -p data
           python db_manager.py
-          # 每月 1 號自動觸發 --monthly-sync 參數，其餘日子使用高效官方底冊
           if [ "$(date +'%d')" = "01" ]; then
             python update_holdings.py --monthly-sync
           else
