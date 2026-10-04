@@ -8,49 +8,50 @@ import re
 
 st.set_page_config(page_title="美股細分行業 ETF 深度監控與市場寬度雷達", page_icon="📈", layout="wide")
 
+# ==============================================================================
+# 0. 配置正確的 Google Sheet ID
+# ==============================================================================
+DEFAULT_SHEET_ID = "1m5Iw5TEGCWDfhnta3Xv83er2j91gIDp56LHWjEjdjxM"
+
 st.sidebar.header("⚙️ 數據庫連線設定")
 raw_input = st.sidebar.text_input(
     "Google Sheet 網址或試算表 ID:",
-    value="1qd_h5Q768s5_4XPcO8Nqbruvqy4VPOu4OJLm5vQ5ggY",
+    value=DEFAULT_SHEET_ID,
     help="您可以直接貼上整串 Google 試算表瀏覽器網址，系統會自動提取 ID！"
 )
 
-# 自動提取乾淨的 Sheet ID (支援直接貼上完整網址或純 ID)
 def extract_sheet_id(text):
     if not text:
-        return ""
+        return DEFAULT_SHEET_ID
     text = text.strip()
     match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", text)
     if match:
         return match.group(1)
-    # 若直接是 ID
     if "/" not in text and len(text) > 20:
         return text
-    return text
+    return DEFAULT_SHEET_ID
 
 sheet_id = extract_sheet_id(raw_input)
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=15)
 def load_sheet_csv(s_id, sheet_name):
-    """多通道免金鑰讀取 Google Sheet 分頁為 DataFrame"""
+    """免金鑰安全讀取 Google Sheet 分頁為 DataFrame"""
     if not s_id:
         return None, "請輸入有效的 Google Sheet ID"
         
     encoded_name = urllib.parse.quote(sheet_name)
-    # 通道 1: 依分頁名稱讀取
     url1 = f"https://docs.google.com/spreadsheets/d/{s_id}/gviz/tq?tqx=out:csv&sheet={encoded_name}"
-    # 通道 2: 直接讀取第 1 個分頁 (gid=0 兜底)
     url2 = f"https://docs.google.com/spreadsheets/d/{s_id}/export?format=csv&id={s_id}&gid=0"
     
     for u in [url1, url2]:
         try:
-            df = pd.read_csv(u)
+            df = pd.read_csv(u, header=None)
             if df is not None and not df.empty and len(df.columns) >= 3:
                 return df, "OK"
-        except Exception as e:
-            err_msg = str(e)
+        except Exception:
+            pass
             
-    return None, f"連線受阻。請確認已開啟【知道連結的使用者均可檢視】權限。"
+    return None, "連線受阻。請確認已開啟【知道連結的使用者均可檢視】權限。"
 
 st.title("🏛️ 美股細分行業 ETF 深度監控與市場寬度雷達")
 st.caption("⚡ 數據底層：Google Sheets 即時同步 | 前端界面：互動式量化雷達儀表板")
@@ -73,35 +74,7 @@ if df_raw is None or df_raw.empty:
        * 您目前輸入的 ID 為：`{sheet_id}`
        * 請直接在 Google 試算表上方網址列將整串網址複製，貼到左側邊欄輸入框中即可。
     """)
-    st.info("💡 貼心提示：確認修改好【共用】為檢視者後，點擊左側上方按鈕或重新整理網頁即可秒速連線！")
     st.stop()
-
-# 數據清洗與解析 (若讀取成功正常渲染)
-try:
-    spy_p = df_raw.iloc[1, 1] if len(df_raw) > 1 else 0
-    spy_c = df_raw.iloc[1, 2] if len(df_raw) > 1 else 0
-    qqq_p = df_raw.iloc[1, 4] if len(df_raw) > 1 else 0
-    qqq_c = df_raw.iloc[1, 5] if len(df_raw) > 1 else 0
-    iwm_p = df_raw.iloc[1, 7] if len(df_raw) > 1 else 0
-    iwm_c = df_raw.iloc[1, 8] if len(df_raw) > 1 else 0
-    dia_p = df_raw.iloc[1, 12] if len(df_raw) > 1 else 0
-    dia_c = df_raw.iloc[1, 13] if len(df_raw) > 1 else 0
-except:
-    spy_p, spy_c, qqq_p, qqq_c, iwm_p, iwm_c, dia_p, dia_c = 0, 0, 0, 0, 0, 0, 0, 0
-
-header_row_idx = None
-for idx, r in df_raw.iterrows():
-    if any("ETF 代號" in str(v) for v in r.values):
-        header_row_idx = idx
-        break
-
-if header_row_idx is not None:
-    df_metrics = df_raw.iloc[header_row_idx+1:].copy()
-    df_metrics.columns = [str(c).strip() for c in df_raw.iloc[header_row_idx].values]
-    df_metrics = df_metrics.dropna(subset=["ETF 代號"])
-    df_metrics = df_metrics[df_metrics["ETF 代號"].str.len() <= 6]
-else:
-    df_metrics = df_raw.copy()
 
 def clean_num(val):
     if pd.isna(val): return 0.0
@@ -109,32 +82,91 @@ def clean_num(val):
     try: return float(s)
     except: return 0.0
 
-col_map = {
-    "最新現價": "close_price",
-    "當日升幅": "pct_change",
-    "內部等權升幅": "equal_weight_return",
-    "等權差額 (背離)": "ew_vs_cap_spread",
-    "上漲佔比%": "advancing_ratio",
-    "20日均線(20MA)": "ma20",
-    "距20MA偏離度": "dist_20ma",
-    "5日動量": "momentum_5d",
-    "轉勢雷達信號": "reversal_signal_flag",
-    "內部升跌狀態": "adv_dec_text",
-    "大板塊 (GICS)": "sector",
-    "細分子行業": "sub_industry",
-    "ETF 名稱": "name",
-    "ETF 代號": "symbol",
-    "發行商": "issuer"
-}
+# -------------------------------------------------------------
+# 1. 精準解析「宏觀大盤層」(SPY, QQQ, IWM, DIA, VIX)
+# -------------------------------------------------------------
+spy_p, spy_c = 0.0, 0.0
+qqq_p, qqq_c = 0.0, 0.0
+iwm_p, iwm_c = 0.0, 0.0
+dia_p, dia_c = 0.0, 0.0
 
-for k, v in col_map.items():
-    if k in df_metrics.columns:
-        df_metrics[v] = df_metrics[k]
+for r_idx in range(min(6, len(df_raw))):
+    row_vals = [str(x).strip() for x in df_raw.iloc[r_idx].values]
+    for c_idx, val in enumerate(row_vals):
+        if "SPY" in val and c_idx + 2 < len(row_vals):
+            spy_p = clean_num(row_vals[c_idx+1])
+            spy_c = clean_num(row_vals[c_idx+2])
+        elif "QQQ" in val and c_idx + 2 < len(row_vals):
+            qqq_p = clean_num(row_vals[c_idx+1])
+            qqq_c = clean_num(row_vals[c_idx+2])
+        elif "IWM" in val and c_idx + 2 < len(row_vals):
+            iwm_p = clean_num(row_vals[c_idx+1])
+            iwm_c = clean_num(row_vals[c_idx+2])
+        elif "DIA" in val and c_idx + 2 < len(row_vals):
+            dia_p = clean_num(row_vals[c_idx+1])
+            dia_c = clean_num(row_vals[c_idx+2])
 
-num_cols = ["close_price", "pct_change", "equal_weight_return", "ew_vs_cap_spread", "advancing_ratio", "dist_20ma", "momentum_5d"]
-for c in num_cols:
-    if c in df_metrics.columns:
-        df_metrics[c] = df_metrics[c].apply(clean_num)
+# -------------------------------------------------------------
+# 2. 定位主數據表格表頭 (尋找包含「ETF 代號」的那一行)
+# -------------------------------------------------------------
+header_idx = None
+for r_idx in range(min(12, len(df_raw))):
+    row_text = "".join([str(x) for x in df_raw.iloc[r_idx].values])
+    if "ETF 代號" in row_text or "ETF代號" in row_text:
+        header_idx = r_idx
+        break
+
+if header_idx is None:
+    header_idx = 5 if len(df_raw) > 5 else 0
+
+raw_headers = [str(x).strip().replace("\n", "").replace(" ", "") for x in df_raw.iloc[header_idx].values]
+df_metrics = df_raw.iloc[header_idx+1:].copy()
+df_metrics.columns = raw_headers
+
+def find_col(possible_names):
+    for p in possible_names:
+        clean_p = p.replace(" ", "")
+        for col in df_metrics.columns:
+            if clean_p in col:
+                return col
+    return None
+
+c_sym = find_col(["ETF代號", "代號", "Symbol", "Ticker"])
+c_name = find_col(["ETF名稱", "名稱", "Name"])
+c_sec = find_col(["大板塊", "板塊", "Sector"])
+c_ind = find_col(["細分子行業", "子行業", "Industry"])
+c_iss = find_col(["發行商", "Issuer"])
+c_price = find_col(["最新現價", "現價", "Price", "收盤價"])
+c_pct = find_col(["當日升幅", "升幅", "漲跌幅", "pct_change"])
+c_ew = find_col(["內部等權升幅", "等權升幅", "等權"])
+c_spread = find_col(["等權差額", "差額", "背離"])
+c_state = find_col(["內部升跌狀態", "升跌狀態", "內部狀態"])
+c_adv = find_col(["上漲佔比", "佔比", "勝率"])
+c_dist = find_col(["距20MA", "偏離度"])
+c_mom = find_col(["5日動量", "動量"])
+c_sig = find_col(["轉勢雷達信號", "轉勢信號", "信號"])
+c_reb = find_col(["調倉月份", "調倉"])
+
+df_metrics["symbol"] = df_metrics[c_sym].astype(str).str.strip().str.upper() if c_sym else ""
+df_metrics = df_metrics[df_metrics["symbol"].str.len().between(2, 6)]
+df_metrics = df_metrics[~df_metrics["symbol"].str.contains("ETF|代號|--|NAN", na=False)]
+
+df_metrics["name"] = df_metrics[c_name].astype(str).str.strip() if c_name else df_metrics["symbol"]
+df_metrics["sector"] = df_metrics[c_sec].astype(str).str.strip() if c_sec else "其他"
+df_metrics["sub_industry"] = df_metrics[c_ind].astype(str).str.strip() if c_ind else "其他"
+df_metrics["issuer"] = df_metrics[c_iss].astype(str).str.strip() if c_iss else "--"
+df_metrics["adv_dec_text"] = df_metrics[c_state].astype(str).str.strip() if c_state else "--"
+df_metrics["reversal_signal_flag"] = df_metrics[c_sig].astype(str).str.strip() if c_sig else "常規波動"
+df_metrics["調倉月份"] = df_metrics[c_reb].astype(str).str.strip() if c_reb else "--"
+
+# 徹底保證以下所有欄位 100% 存在，絕不拋出 KeyError
+df_metrics["close_price"] = df_metrics[c_price].apply(clean_num) if c_price else 0.0
+df_metrics["pct_change"] = df_metrics[c_pct].apply(clean_num) if c_pct else 0.0
+df_metrics["equal_weight_return"] = df_metrics[c_ew].apply(clean_num) if c_ew else 0.0
+df_metrics["ew_vs_cap_spread"] = df_metrics[c_spread].apply(clean_num) if c_spread else 0.0
+df_metrics["advancing_ratio"] = df_metrics[c_adv].apply(clean_num) if c_adv else 0.0
+df_metrics["dist_20ma"] = df_metrics[c_dist].apply(clean_num) if c_dist else 0.0
+df_metrics["momentum_5d"] = df_metrics[c_mom].apply(clean_num) if c_mom else 0.0
 
 top_c1, top_c2 = st.columns([8, 2])
 with top_c2:
@@ -142,26 +174,33 @@ with top_c2:
         st.cache_data.clear()
         st.rerun()
 
+# -------------------------------------------------------------
+# 📋 財報日更新表
+# -------------------------------------------------------------
 st.markdown("## 📋 財報日更新表")
 st.caption("即時監控 Universe 內各 ETF 底層持股更新狀態、調倉週期及內部升跌情況：")
-disp_sync_cols = [c for c in ["symbol", "name", "issuer", "sector", "sub_industry", "adv_dec_text", "reversal_signal_flag", "調倉月份"] if c in df_metrics.columns]
-st.dataframe(df_metrics[disp_sync_cols].rename(columns={
+disp_cols = ["symbol", "name", "issuer", "sector", "sub_industry", "adv_dec_text", "reversal_signal_flag", "調倉月份"]
+st.dataframe(df_metrics[disp_cols].rename(columns={
     "symbol": "ETF 代號", "name": "ETF 名稱", "issuer": "發行商", "sector": "大板塊",
     "sub_industry": "細分子行業", "adv_dec_text": "內部升跌狀態", "reversal_signal_flag": "轉勢信號", "調倉月份": "官方調倉月份"
 }), use_container_width=True, height=220)
 
 st.markdown("---")
 
+# -------------------------------------------------------------
+# A. 全局市場層 (Macro Breadth)
+# -------------------------------------------------------------
 st.markdown("## 🌐 A. 全局市場層 (Macro Breadth)")
 m_c1, m_c2, m_c3, m_c4 = st.columns(4)
-m_c1.metric("標普 500 (SPY)", f"${clean_num(spy_p):.2f}", delta=f"{clean_num(spy_c):+.2f}%")
-m_c2.metric("納指 100 (QQQ)", f"${clean_num(qqq_p):.2f}", delta=f"{clean_num(qqq_c):+.2f}%")
-m_c3.metric("羅素 2000 (IWM)", f"${clean_num(iwm_p):.2f}", delta=f"{clean_num(iwm_c):+.2f}%")
-m_c4.metric("道瓊斯 (DIA)", f"${clean_num(dia_p):.2f}", delta=f"{clean_num(dia_c):+.2f}%")
+m_c1.metric("標普 500 (SPY)", f"${spy_p:.2f}" if spy_p > 0 else "--", delta=f"{spy_c:+.2f}%" if spy_c != 0 else None)
+m_c2.metric("納指 100 (QQQ)", f"${qqq_p:.2f}" if qqq_p > 0 else "--", delta=f"{qqq_c:+.2f}%" if qqq_c != 0 else None)
+m_c3.metric("羅素 2000 (IWM)", f"${iwm_p:.2f}" if iwm_p > 0 else "--", delta=f"{iwm_c:+.2f}%" if iwm_c != 0 else None)
+m_c4.metric("道瓊斯 (DIA)", f"${dia_p:.2f}" if dia_p > 0 else "--", delta=f"{dia_c:+.2f}%" if dia_c != 0 else None)
 
 sectors_list = ['XLK','XLV','XLF','XLI','XLY','XLP','XLE','XLB','XLU','XLRE','XLC']
 df_sectors = df_metrics[df_metrics["symbol"].isin(sectors_list)].copy()
-if not df_sectors.empty:
+
+if not df_sectors.empty and "pct_change" in df_sectors.columns:
     st.markdown("#### 🧭 11 大核心板塊 (Sectors) 當日資金流向熱力分佈")
     fig_sector = px.bar(
         df_sectors.sort_values(by="pct_change", ascending=False),
@@ -178,6 +217,9 @@ if not df_sectors.empty:
 
 st.markdown("---")
 
+# -------------------------------------------------------------
+# C. 轉勢雷達 (Reversal Radar)
+# -------------------------------------------------------------
 st.markdown("## 🚨 C. 轉勢雷達 (Reversal Radar)")
 radar_alerts = df_metrics[
     (df_metrics["reversal_signal_flag"].str.contains("⚡|⚠️|🚀|🔄", na=False)) &
@@ -191,18 +233,23 @@ if not radar_alerts.empty:
                      f"• 信號: **{r['reversal_signal_flag']}**\n"
                      f"• ETF 漲跌: `{r['pct_change']:+.2f}%` | 等權: `{r['equal_weight_return']:+.2f}%`\n"
                      f"• 距 20MA: `{r['dist_20ma']:+.2f}%`\n"
-                     f"• 內部狀況: **{r.get('adv_dec_text', '--')}**")
+                     f"• 內部狀況: **{r['adv_dec_text']}**")
 else:
     st.success("✅ 今日 Universe 內暫未發現極端轉勢異動，市場維持現有趨勢。")
 
 st.markdown("---")
 
+# -------------------------------------------------------------
+# B. 細分子行業篩選層 (Sub-Industry Screener)
+# -------------------------------------------------------------
 st.markdown("## 🔬 B. 細分子行業篩選層 (Sub-Industry Screener)")
+
 STANDARD_11_SECTORS = [
     "資訊科技", "通信服務", "非必需消費", "必需消費", "醫療保健",
     "金融", "工業", "能源", "原材料", "公用事業", "房地產"
 ]
-sel_sectors = st.sidebar.multiselect("選擇大板塊 (GICS 11 大標準分類):", STANDARD_11_SECTORS, default=STANDARD_11_SECTORS)
+avail_secs = [s for s in STANDARD_11_SECTORS if s in df_metrics["sector"].unique().tolist()] or STANDARD_11_SECTORS
+sel_sectors = st.sidebar.multiselect("選擇大板塊 (GICS 11 大標準分類):", STANDARD_11_SECTORS, default=avail_secs)
 
 sort_by = st.sidebar.selectbox("動量 / 均線排行 (Sort By):", [
     "當日升幅 (pct_change)", "5 日動量 (momentum_5d)",
@@ -233,7 +280,7 @@ sort_map = {
 }
 view_df = view_df.sort_values(by=sort_map[sort_by], ascending=False)
 
-disp_cols = [
+screener_cols = [
     "symbol", "name", "sector", "sub_industry", "close_price",
     "pct_change", "equal_weight_return", "ew_vs_cap_spread",
     "adv_dec_text", "advancing_ratio",
@@ -246,11 +293,14 @@ rename_map = {
     "dist_20ma": "距20MA", "momentum_5d": "5日動量", "reversal_signal_flag": "轉勢信號"
 }
 
-st.dataframe(view_df[disp_cols].rename(columns=rename_map).style.format({
+st.dataframe(view_df[screener_cols].rename(columns=rename_map).style.format({
     "收盤價": "${:.2f}", "當日升幅": "{:+.2f}%", "等權升幅": "{:+.2f}%",
     "等權差額": "{:+.2f}%", "上漲佔比%": "{:.1f}%", "距20MA": "{:+.2f}%", "5日動量": "{:+.2f}%"
 }), use_container_width=True, height=420)
 
+# -------------------------------------------------------------
+# 💡 內外背離雷達圖 (散點圖)
+# -------------------------------------------------------------
 st.markdown("---")
 st.subheader("💡 內外背離雷達圖 (ETF 當日升幅 vs 等權升幅)")
 if not view_df.empty:
@@ -270,6 +320,9 @@ if not view_df.empty:
     fig_scat.update_layout(height=480)
     st.plotly_chart(fig_scat, use_container_width=True)
 
+# -------------------------------------------------------------
+# 🔎 單一細分 ETF 成分股持股穿透
+# -------------------------------------------------------------
 st.markdown("---")
 st.subheader("🔎 單一細分 ETF 成分股持股穿透 (Holdings Drill-Down)")
 all_avail_symbols = df_metrics["symbol"].tolist()
@@ -283,12 +336,14 @@ if default_target:
         if df_drill is not None and not df_drill.empty:
             h_idx = 0
             for i_row, r_val in df_drill.iterrows():
-                if any("股票代號" in str(x) for x in r_val.values):
+                row_str = "".join([str(x) for x in r_val.values])
+                if "股票代號" in row_str or "代號" in row_str:
                     h_idx = i_row
                     break
             df_drill_clean = df_drill.iloc[h_idx+1:].copy()
-            df_drill_clean.columns = [str(c).strip() for c in df_drill.iloc[h_idx].values]
+            df_drill_clean.columns = [str(c).strip().replace("\n", "") for c in df_drill.iloc[h_idx].values]
             df_drill_clean = df_drill_clean.dropna(subset=[df_drill_clean.columns[0]])
+            df_drill_clean = df_drill_clean[df_drill_clean[df_drill_clean.columns[0]].astype(str).str.len() <= 6]
             
             st.write(f"**{target_etf}** 底層持股清單（來自 Google Sheet【{tab_name}】分頁，共展示 **{len(df_drill_clean)} 隻**成分股）：")
             st.dataframe(df_drill_clean, use_container_width=True, height=350)
