@@ -80,7 +80,6 @@ def clean_num(val, is_pct=False):
 # -------------------------------------------------------------
 # 1. 全局深度掃描提取四大宏觀指數 (SPY, QQQ, IWM, DIA, VIX)
 # -------------------------------------------------------------
-# 將前 10 行內所有單元格攤平，並進行逐格掃描
 flat_matrix = []
 for r_i in range(min(10, len(df_raw))):
     for c_i, v in enumerate(df_raw.iloc[r_i].values):
@@ -89,10 +88,8 @@ for r_i in range(min(10, len(df_raw))):
             flat_matrix.append((r_i, c_i, s_v))
 
 def find_macro_data(ticker_symbol, default_p, default_c):
-    # 先在矩陣中尋找包含該代號的單元格
     for r_i, c_i, text in flat_matrix:
         if ticker_symbol in text.upper():
-            # 找到後，在該行向後尋找數值
             row_items = [str(x).strip() for x in df_raw.iloc[r_i].values[c_i+1:] if str(x).strip() and str(x).lower() != "nan"]
             nums = []
             for item in row_items[:5]:
@@ -114,14 +111,13 @@ def find_macro_data(ticker_symbol, default_p, default_c):
                 return nums[0][0], default_c
     return default_p, default_c
 
-# 抓取數值，並給予穩健的安全兜底值
 spy_p, spy_c = find_macro_data("SPY", 769.64, 0.74)
 qqq_p, qqq_c = find_macro_data("QQQ", 749.58, 1.02)
 iwm_p, iwm_c = find_macro_data("IWM", 281.52, 0.95)
 dia_p, dia_c = find_macro_data("DIA", 511.10, 0.49)
 
 # -------------------------------------------------------------
-# 2. 定位主數據表格表頭並構建 DataFrame
+# 2. 定位主數據表格表頭並【嚴格隔離 G 欄 (當日升幅) 與 H 欄 (等權升幅)】
 # -------------------------------------------------------------
 header_idx = None
 for r_idx in range(min(12, len(df_raw))):
@@ -135,30 +131,38 @@ if header_idx is None:
 
 row_header_vals = [str(x).replace(" ", "").replace("\n", "").strip() for x in df_raw.iloc[header_idx].values]
 
-def get_col_index(possible_names, fallback_col=None):
-    for p in possible_names:
-        clean_p = p.replace(" ", "").replace("\n", "")
+def get_col_index_exact(exact_keywords, fallback_col):
+    # 優先完全精確匹配，避免模糊匹配互相覆蓋
+    for kw in exact_keywords:
         for idx, val in enumerate(row_header_vals):
-            if clean_p in val:
+            if kw in val:
                 return idx
     return fallback_col
 
-idx_sym = get_col_index(["ETF代號", "代號", "Symbol"], fallback_col=0)
-idx_name = get_col_index(["ETF名稱", "名稱", "Name"], fallback_col=1)
-idx_sec = get_col_index(["大板塊", "板塊", "Sector"], fallback_col=2)
-idx_ind = get_col_index(["細分子行業", "子行業", "Industry"], fallback_col=3)
-idx_iss = get_col_index(["發行商", "Issuer"], fallback_col=4)
-idx_price = get_col_index(["最新現價", "現價", "Price"], fallback_col=5)
-idx_pct = get_col_index(["當日升幅", "升幅", "漲跌幅", "當日漲跌"], fallback_col=6)
-idx_ew = get_col_index(["內部等權升幅", "等權升幅", "等權漲跌"], fallback_col=7)
-idx_spread = get_col_index(["等權差額", "差額", "背離"], fallback_col=8)
-idx_state = get_col_index(["內部升跌狀態", "升跌狀態", "內部升跌"], fallback_col=9)
-idx_adv = get_col_index(["上漲佔比", "上漲占比", "佔比", "占比", "勝率"], fallback_col=10)
-idx_ma20 = get_col_index(["20日均線", "20MA均線"], fallback_col=11)
-idx_dist = get_col_index(["距20MA偏離度", "距20MA偏離", "距20MA", "偏離度", "偏離"], fallback_col=12)
-idx_mom = get_col_index(["5日動量", "5日", "動量"], fallback_col=13)
-idx_sig = get_col_index(["轉勢雷達信號", "轉勢雷達", "轉勢信號", "信號"], fallback_col=14)
-idx_reb = get_col_index(["調倉月份", "調倉", "月份"], fallback_col=15)
+idx_sym = get_col_index_exact(["ETF代號", "代號"], 0)
+idx_name = get_col_index_exact(["ETF名稱", "名稱"], 1)
+idx_sec = get_col_index_exact(["大板塊", "板塊"], 2)
+idx_ind = get_col_index_exact(["細分子行業", "子行業"], 3)
+idx_iss = get_col_index_exact(["發行商"], 4)
+idx_price = get_col_index_exact(["最新現價", "收盤價", "現價"], 5)
+
+# 核心修復：嚴格區分「當日升幅」與「內部等權升幅」，絕不混用！
+idx_pct = get_col_index_exact(["當日升幅", "當日漲跌", "ETF升幅"], 6)
+idx_ew = get_col_index_exact(["內部等權升幅", "內部等權", "等權升幅", "等權漲跌"], 7)
+
+# 物理強制校驗：如果兩者抓到了同一個索引，強制分開為第 6 欄 (G欄) 與第 7 欄 (H欄)！
+if idx_pct == idx_ew:
+    idx_pct = 6
+    idx_ew = 7
+
+idx_spread = get_col_index_exact(["等權差額", "背離差額", "差額"], 8)
+idx_state = get_col_index_exact(["內部升跌狀態", "升跌狀態", "內部升跌"], 9)
+idx_adv = get_col_index_exact(["上漲佔比", "上漲占比", "佔比", "占比"], 10)
+idx_ma20 = get_col_index_exact(["20日均線", "20MA均線"], 11)
+idx_dist = get_col_index_exact(["距20MA偏離度", "距20MA偏離", "距20MA"], 12)
+idx_mom = get_col_index_exact(["5日動量", "動量"], 13)
+idx_sig = get_col_index_exact(["轉勢雷達信號", "轉勢信號", "信號"], 14)
+idx_reb = get_col_index_exact(["調倉月份", "調倉"], 15)
 
 records = []
 for r_i in range(header_idx + 1, len(df_raw)):
@@ -167,22 +171,30 @@ for r_i in range(header_idx + 1, len(df_raw)):
     if not (2 <= len(raw_sym) <= 6) or any(k in raw_sym for k in ["ETF", "代號", "--", "NAN"]):
         continue
         
+    p_pct = clean_num(row[idx_pct], is_pct=True) if idx_pct < len(row) else 0.0
+    p_ew = clean_num(row[idx_ew], is_pct=True) if idx_ew < len(row) else 0.0
+    p_spread = clean_num(row[idx_spread], is_pct=True) if idx_spread < len(row) else (p_ew - p_pct)
+    
+    # 兜底校驗：如果抓出來的等權差額為 0 但 G 和 H 確實不同，自動重算
+    if p_spread == 0.0 and (p_ew != p_pct):
+        p_spread = p_ew - p_pct
+        
     records.append({
         "symbol": raw_sym,
-        "name": str(row[idx_name]).strip() if idx_name is not None and idx_name < len(row) else raw_sym,
-        "sector": str(row[idx_sec]).strip() if idx_sec is not None and idx_sec < len(row) else "其他",
-        "sub_industry": str(row[idx_ind]).strip() if idx_ind is not None and idx_ind < len(row) else "其他",
-        "issuer": str(row[idx_iss]).strip() if idx_iss is not None and idx_iss < len(row) else "--",
-        "close_price": clean_num(row[idx_price]) if idx_price is not None and idx_price < len(row) else 0.0,
-        "pct_change": clean_num(row[idx_pct], is_pct=True) if idx_pct is not None and idx_pct < len(row) else 0.0,
-        "equal_weight_return": clean_num(row[idx_ew], is_pct=True) if idx_ew is not None and idx_ew < len(row) else 0.0,
-        "ew_vs_cap_spread": clean_num(row[idx_spread], is_pct=True) if idx_spread is not None and idx_spread < len(row) else 0.0,
-        "adv_dec_text": str(row[idx_state]).strip() if idx_state is not None and idx_state < len(row) else "--",
-        "advancing_ratio": clean_num(row[idx_adv], is_pct=True) if idx_adv is not None and idx_adv < len(row) else 0.0,
-        "dist_20ma": clean_num(row[idx_dist], is_pct=True) if idx_dist is not None and idx_dist < len(row) else 0.0,
-        "momentum_5d": clean_num(row[idx_mom], is_pct=True) if idx_mom is not None and idx_mom < len(row) else 0.0,
-        "reversal_signal_flag": str(row[idx_sig]).strip() if idx_sig is not None and idx_sig < len(row) else "常規波動",
-        "調倉月份": str(row[idx_reb]).strip() if idx_reb is not None and idx_reb < len(row) else "--"
+        "name": str(row[idx_name]).strip() if idx_name < len(row) else raw_sym,
+        "sector": str(row[idx_sec]).strip() if idx_sec < len(row) else "其他",
+        "sub_industry": str(row[idx_ind]).strip() if idx_ind < len(row) else "其他",
+        "issuer": str(row[idx_iss]).strip() if idx_iss < len(row) else "--",
+        "close_price": clean_num(row[idx_price]) if idx_price < len(row) else 0.0,
+        "pct_change": p_pct,
+        "equal_weight_return": p_ew,
+        "ew_vs_cap_spread": p_spread,
+        "adv_dec_text": str(row[idx_state]).strip() if idx_state < len(row) else "--",
+        "advancing_ratio": clean_num(row[idx_adv], is_pct=True) if idx_adv < len(row) else 0.0,
+        "dist_20ma": clean_num(row[idx_dist], is_pct=True) if idx_dist < len(row) else 0.0,
+        "momentum_5d": clean_num(row[idx_mom], is_pct=True) if idx_mom < len(row) else 0.0,
+        "reversal_signal_flag": str(row[idx_sig]).strip() if idx_sig < len(row) else "常規波動",
+        "調倉月份": str(row[idx_reb]).strip() if idx_reb < len(row) else "--"
     })
 
 df_metrics = pd.DataFrame(records)
@@ -208,39 +220,33 @@ st.dataframe(df_metrics[disp_cols].rename(columns={
 st.markdown("---")
 
 # -------------------------------------------------------------
-# A. 全局市場層 (Macro Breadth) — 四大指數專屬縱向聚合排版 (標普一齊、納指一齊、羅素一齊、道指一齊！)
+# A. 全局市場層 (Macro Breadth) — 四大指數專屬縱向聚合排版
 # -------------------------------------------------------------
 st.markdown("## 🌐 A. 全局市場層 (Macro Breadth)")
 
-# 內部真實寬度指標計算
 valid_adv_list = df_metrics[df_metrics["advancing_ratio"] > 0]["advancing_ratio"].tolist()
 base_adv = np.mean(valid_adv_list) if valid_adv_list else 58.0
 
-# 1. 標普 500 專屬數據
 sp_high = int(max(spy_c * 16 + 18, 5))
 sp_low = int(max(-spy_c * 15 + 6, 2))
 sp_net = sp_high - sp_low
 sp_50ma = min(max(base_adv * 1.02, 20.0), 92.0)
 
-# 2. 納指 100 專屬數據
 nas_high = int(max(qqq_c * 14 + 14, 4))
 nas_low = int(max(-qqq_c * 12 + 4, 1))
 nas_net = nas_high - nas_low
 nas_50ma = min(max(base_adv * 1.15, 25.0), 95.0)
 
-# 3. 羅素 2000 專屬數據
 iwm_high = int(max(iwm_c * 20 + 25, 8))
 iwm_low = int(max(-iwm_c * 22 + 15, 5))
 iwm_net = iwm_high - iwm_low
 iwm_50ma = min(max(base_adv * 0.88, 15.0), 85.0)
 
-# 4. 道瓊斯 專屬數據
 dia_high = int(max(dia_c * 8 + 6, 2))
 dia_low = int(max(-dia_c * 6 + 2, 1))
 dia_net = dia_high - dia_low
 dia_50ma = min(max(base_adv * 0.95, 22.0), 90.0)
 
-# 創建 4 大專屬直欄，將四大指數各自的所有指標完全聚合排在一齊！
 col_sp, col_nas, col_iwm, col_dia = st.columns(4)
 
 with col_sp:
@@ -375,26 +381,51 @@ st.dataframe(view_df[screener_cols].rename(columns=rename_map).style.format({
 }), use_container_width=True, height=420)
 
 # -------------------------------------------------------------
-# 💡 內外背離雷達圖 (散點圖)
+# 💡 內外背離雷達圖 (散點圖) — 核心校準：X 軸 ETF 市值升幅 vs Y 軸 內部等權升幅！
 # -------------------------------------------------------------
 st.markdown("---")
 st.subheader("💡 內外背離雷達圖 (ETF 當日升幅 vs 等權升幅)")
 if not view_df.empty:
     clean_view_scat = view_df.loc[:, ~view_df.columns.duplicated()].copy()
+    
+    # 計算氣泡大小：差額絕對值越明顯氣泡越大
+    bubble_size = np.abs(clean_view_scat["ew_vs_cap_spread"]) * 1.5 + 8
+    clean_view_scat["bubble_size"] = bubble_size.fillna(8)
+    
     fig_scat = px.scatter(
         clean_view_scat,
-        x="pct_change", y="equal_weight_return",
-        text="symbol", color="advancing_ratio",
+        x="pct_change",
+        y="equal_weight_return",
+        text="symbol",
+        color="advancing_ratio",
         color_continuous_scale="RdYlGn",
-        size=np.abs(clean_view_scat["ew_vs_cap_spread"]) + 3,
+        size="bubble_size",
         hover_data=["name", "sub_industry", "adv_dec_text", "reversal_signal_flag"],
-        labels={"pct_change": "ETF 當日升幅 (%)", "equal_weight_return": "內部等權升幅 (%)"}
+        labels={
+            "pct_change": "ETF 當日升幅 (市值加權 %)",
+            "equal_weight_return": "內部等權升幅 (底層均值 %)",
+            "advancing_ratio": "上漲佔比 (%)"
+        }
     )
-    min_v = min(clean_view_scat["pct_change"].min(), clean_view_scat["equal_weight_return"].min(), -2)
-    max_v = max(clean_view_scat["pct_change"].max(), clean_view_scat["equal_weight_return"].max(), 2)
-    fig_scat.add_trace(go.Scatter(x=[min_v, max_v], y=[min_v, max_v], mode="lines", line=dict(dash="dash", color="gray"), name="等權 = 市值"))
+    
+    # 基準參考線：等權 = 市值 (45度對角虛線)
+    all_vals = pd.concat([clean_view_scat["pct_change"], clean_view_scat["equal_weight_return"]])
+    min_v = min(all_vals.min() - 0.5, -1.5)
+    max_v = max(all_vals.max() + 0.5, 3.5)
+    
+    fig_scat.add_trace(go.Scatter(
+        x=[min_v, max_v],
+        y=[min_v, max_v],
+        mode="lines",
+        line=dict(dash="dash", color="rgba(128,128,128,0.6)", width=1.5),
+        name="等權 = 市值 (無背離基準線)"
+    ))
     fig_scat.update_traces(textposition="top center")
-    fig_scat.update_layout(height=480)
+    fig_scat.update_layout(
+        height=520,
+        xaxis=dict(title="ETF 當日升幅 (市值加權 %)", zeroline=True, zerolinecolor="rgba(0,0,0,0.15)"),
+        yaxis=dict(title="內部等權升幅 (底層均值 %)", zeroline=True, zerolinecolor="rgba(0,0,0,0.15)")
+    )
     st.plotly_chart(fig_scat, use_container_width=True)
 
 # -------------------------------------------------------------
