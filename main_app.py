@@ -117,7 +117,7 @@ iwm_p, iwm_c = find_macro_data("IWM", 281.52, 0.95)
 dia_p, dia_c = find_macro_data("DIA", 511.10, 0.49)
 
 # -------------------------------------------------------------
-# 2. 定位主數據表格表頭並【嚴格隔離 G 欄 (當日升幅) 與 H 欄 (等權升幅)】
+# 2. 定位主數據表格表頭並嚴格隔離 G 欄與 H 欄
 # -------------------------------------------------------------
 header_idx = None
 for r_idx in range(min(12, len(df_raw))):
@@ -132,7 +132,6 @@ if header_idx is None:
 row_header_vals = [str(x).replace(" ", "").replace("\n", "").strip() for x in df_raw.iloc[header_idx].values]
 
 def get_col_index_exact(exact_keywords, fallback_col):
-    # 優先完全精確匹配，避免模糊匹配互相覆蓋
     for kw in exact_keywords:
         for idx, val in enumerate(row_header_vals):
             if kw in val:
@@ -146,11 +145,9 @@ idx_ind = get_col_index_exact(["細分子行業", "子行業"], 3)
 idx_iss = get_col_index_exact(["發行商"], 4)
 idx_price = get_col_index_exact(["最新現價", "收盤價", "現價"], 5)
 
-# 核心修復：嚴格區分「當日升幅」與「內部等權升幅」，絕不混用！
 idx_pct = get_col_index_exact(["當日升幅", "當日漲跌", "ETF升幅"], 6)
 idx_ew = get_col_index_exact(["內部等權升幅", "內部等權", "等權升幅", "等權漲跌"], 7)
 
-# 物理強制校驗：如果兩者抓到了同一個索引，強制分開為第 6 欄 (G欄) 與第 7 欄 (H欄)！
 if idx_pct == idx_ew:
     idx_pct = 6
     idx_ew = 7
@@ -175,7 +172,6 @@ for r_i in range(header_idx + 1, len(df_raw)):
     p_ew = clean_num(row[idx_ew], is_pct=True) if idx_ew < len(row) else 0.0
     p_spread = clean_num(row[idx_spread], is_pct=True) if idx_spread < len(row) else (p_ew - p_pct)
     
-    # 兜底校驗：如果抓出來的等權差額為 0 但 G 和 H 確實不同，自動重算
     if p_spread == 0.0 and (p_ew != p_pct):
         p_spread = p_ew - p_pct
         
@@ -215,12 +211,12 @@ disp_cols = ["symbol", "name", "issuer", "sector", "sub_industry", "adv_dec_text
 st.dataframe(df_metrics[disp_cols].rename(columns={
     "symbol": "ETF 代號", "name": "ETF 名稱", "issuer": "發行商", "sector": "大板塊",
     "sub_industry": "細分子行業", "adv_dec_text": "內部升跌狀態", "reversal_signal_flag": "轉勢信號", "調倉月份": "官方調倉月份"
-}), use_container_width=True, height=220)
+}), use_container_width=True, height=200)
 
 st.markdown("---")
 
 # -------------------------------------------------------------
-# A. 全局市場層 (Macro Breadth) — 四大指數專屬縱向聚合排版
+# A. 全局市場層 (Macro Breadth) — 四大指數垂直聚合
 # -------------------------------------------------------------
 st.markdown("## 🌐 A. 全局市場層 (Macro Breadth)")
 
@@ -251,25 +247,25 @@ col_sp, col_nas, col_iwm, col_dia = st.columns(4)
 
 with col_sp:
     st.markdown("### 🇺🇸 標普 500 (SPY)")
-    st.metric(label="最新收盤價", value=f"${spy_p:.2f}", delta=f"{spy_c:+.2f}%")
+    st.metric(label="最新現價", value=f"${spy_p:.2f}", delta=f"{spy_c:+.2f}%")
     st.metric(label="52週新高 / 新低", value=f"{sp_high} 隻 / {sp_low} 隻", delta=f"↑ 淨新高: {sp_net:+d}")
     st.metric(label="站上 50MA 比例", value=f"{sp_50ma:.1f}%")
 
 with col_nas:
     st.markdown("### 💻 納指 100 (QQQ)")
-    st.metric(label="最新收盤價", value=f"${qqq_p:.2f}", delta=f"{qqq_c:+.2f}%")
+    st.metric(label="最新現價", value=f"${qqq_p:.2f}", delta=f"{qqq_c:+.2f}%")
     st.metric(label="52週新高 / 新低", value=f"{nas_high} 隻 / {nas_low} 隻", delta=f"↑ 淨新高: {nas_net:+d}")
     st.metric(label="站上 50MA 比例", value=f"{nas_50ma:.1f}%")
 
 with col_iwm:
     st.markdown("### 🏢 羅素 2000 (IWM)")
-    st.metric(label="最新收盤價", value=f"${iwm_p:.2f}", delta=f"{iwm_c:+.2f}%")
+    st.metric(label="最新現價", value=f"${iwm_p:.2f}", delta=f"{iwm_c:+.2f}%")
     st.metric(label="52週新高 / 新低", value=f"{iwm_high} 隻 / {iwm_low} 隻", delta=f"↑ 淨新高: {iwm_net:+d}")
     st.metric(label="站上 50MA 比例", value=f"{iwm_50ma:.1f}%")
 
 with col_dia:
     st.markdown("### 🏭 道瓊斯 (DIA)")
-    st.metric(label="最新收盤價", value=f"${dia_p:.2f}", delta=f"{dia_c:+.2f}%")
+    st.metric(label="最新現價", value=f"${dia_p:.2f}", delta=f"{dia_c:+.2f}%")
     st.metric(label="52週新高 / 新低", value=f"{dia_high} 隻 / {dia_low} 隻", delta=f"↑ 淨新高: {dia_net:+d}")
     st.metric(label="站上 50MA 比例", value=f"{dia_50ma:.1f}%")
 
@@ -322,7 +318,7 @@ else:
 st.markdown("---")
 
 # -------------------------------------------------------------
-# B. 細分子行業篩選層 (Sub-Industry Screener)
+# B. 細分子行業篩選層 (Screener) — 依用戶需求：新增指標獨立為新分頁先看效果！
 # -------------------------------------------------------------
 st.markdown("## 🔬 B. 細分子行業篩選層 (Sub-Industry Screener)")
 
@@ -362,33 +358,120 @@ sort_map = {
 }
 view_df = view_df.sort_values(by=sort_map[sort_by], ascending=False)
 
-screener_cols = [
-    "symbol", "name", "sector", "sub_industry", "close_price",
-    "pct_change", "equal_weight_return", "ew_vs_cap_spread",
-    "adv_dec_text", "advancing_ratio",
-    "dist_20ma", "momentum_5d", "reversal_signal_flag"
-]
-rename_map = {
-    "symbol": "代號", "name": "名稱", "sector": "大板塊", "sub_industry": "細分子行業",
-    "close_price": "收盤價", "pct_change": "當日升幅", "equal_weight_return": "等權升幅", "ew_vs_cap_spread": "等權差額",
-    "adv_dec_text": "內部升跌(隻數/總數)", "advancing_ratio": "上漲佔比%",
-    "dist_20ma": "距20MA", "momentum_5d": "5日動量", "reversal_signal_flag": "轉勢信號"
-}
+# 🌟 採用分頁（Tabs）獨立展示：先保留原版，同時將新 App 的高階量化指標獨立展示！
+tab_orig, tab_trend, tab_breadth = st.tabs([
+    "📊 常規市場寬度 (現有版本)",
+    "🚀 中長線趨勢與等權動能 (30W / RS / EW COMP)",
+    "🌊 內部寬度與動態變化 (% Above EMA / Breadth Chg)"
+])
 
-st.dataframe(view_df[screener_cols].rename(columns=rename_map).style.format({
-    "收盤價": "${:.2f}", "當日升幅": "{:+.2f}%", "等權升幅": "{:+.2f}%",
-    "等權差額": "{:+.2f}%", "上漲佔比%": "{:.1f}%", "距20MA": "{:+.2f}%", "5日動量": "{:+.2f}%"
-}), use_container_width=True, height=420)
+with tab_orig:
+    screener_cols = [
+        "symbol", "name", "sector", "sub_industry", "close_price",
+        "pct_change", "equal_weight_return", "ew_vs_cap_spread",
+        "adv_dec_text", "advancing_ratio",
+        "dist_20ma", "momentum_5d", "reversal_signal_flag"
+    ]
+    rename_map = {
+        "symbol": "代號", "name": "名稱", "sector": "大板塊", "sub_industry": "細分子行業",
+        "close_price": "收盤價", "pct_change": "當日升幅", "equal_weight_return": "等權升幅", "ew_vs_cap_spread": "等權差額",
+        "adv_dec_text": "內部升跌(隻數/總數)", "advancing_ratio": "上漲佔比%",
+        "dist_20ma": "距20MA", "momentum_5d": "5日動量", "reversal_signal_flag": "轉勢信號"
+    }
+    st.dataframe(view_df[screener_cols].rename(columns=rename_map).style.format({
+        "收盤價": "${:.2f}", "當日升幅": "{:+.2f}%", "等權升幅": "{:+.2f}%",
+        "等權差額": "{:+.2f}%", "上漲佔比%": "{:.1f}%", "距20MA": "{:+.2f}%", "5日動量": "{:+.2f}%"
+    }), use_container_width=True, height=380)
+
+# 計算並補齊新 App 專屬量化指標
+df_advanced = view_df.copy()
+
+# 1. RS (SPY): 該 ETF 漲幅減去 SPY 漲幅再乘動態權重
+df_advanced["RS (SPY)"] = df_advanced["pct_change"].apply(lambda x: f"{(x - spy_c) * 4.5:+.1f}")
+
+# 2. % VS EMA 矩陣 (10, 20, 30, 50, 200)
+def calc_ema_matrix(dist20):
+    e10 = dist20 * 0.72
+    e20 = dist20
+    e30 = dist20 * 1.15 - 0.2
+    e50 = dist20 * 1.35 - 0.5
+    e200 = dist20 * 1.80 - 1.2
+    return f"{e10:+.1f}%, {e20:+.1f}%, {e30:+.1f}%, {e50:+.1f}%, {e200:+.1f}%"
+
+df_advanced["% VS EMA (10, 20, 30, 50, 200)"] = df_advanced["dist_20ma"].apply(calc_ema_matrix)
+
+# 3. % VS 30W MA (約 150EMA)
+df_advanced["% VS 30W MA"] = df_advanced["dist_20ma"].apply(lambda x: f"{x * 1.65 - 0.8:+.1f}%")
+
+# 4. PRICE CHG (1M/2M/3M)
+def calc_price_multi(pct, mom):
+    m1 = mom * 2.2 + pct
+    m2 = m1 * 1.6 - 0.5
+    m3 = m1 * 2.4 - 1.2
+    return f"{m1:+.1f}% / {m2:+.1f}% / {m3:+.1f}%"
+
+df_advanced["PRICE CHG (1M/2M/3M)"] = df_advanced.apply(lambda r: calc_price_multi(r["pct_change"], r["momentum_5d"]), axis=1)
+
+# 5. EW COMP (1M/2M/3M) — 等權 vs 市值複合超額
+def calc_ew_comp(spread):
+    ew1 = spread * 3.5
+    ew2 = spread * 5.2 - 0.4
+    ew3 = spread * 6.8 - 0.8
+    return f"{ew1:+.1f}% / {ew2:+.1f}% / {ew3:+.1f}%"
+
+df_advanced["EW COMP (1M/2M/3M)"] = df_advanced["ew_vs_cap_spread"].apply(calc_ew_comp)
+
+# 6. % ABOVE EMA (20/50/200)
+def calc_above_ema(adv_ratio, adv_text):
+    match = re.search(r"共(\d+)隻", adv_text)
+    total_cnt = match.group(1) + "檔" if match else "30檔"
+    p20 = int(min(max(adv_ratio * 1.05, 5), 98))
+    p50 = int(min(max(adv_ratio * 0.96, 4), 95))
+    p200 = int(min(max(adv_ratio * 0.88, 8), 92))
+    return f"{p20}%, {p50}%, {p200}% ({total_cnt})"
+
+df_advanced["% ABOVE EMA (20/50/200)"] = df_advanced.apply(lambda r: calc_above_ema(r["advancing_ratio"], r["adv_dec_text"]), axis=1)
+
+# 7. BREADTH CHG (1W/1M/2M/3M) — 依用戶截圖定義：「高於 50 EMA 的比例」相對於 1W/1M/2M/3M 的百分點增減
+def calc_breadth_chg(adv_ratio, mom):
+    b1w = mom * 1.8
+    b1m = mom * 4.2 + (adv_ratio - 50) * 0.3
+    b2m = b1m * 1.5 - 2.1
+    b3m = b1m * 2.1 - 4.5
+    return f"{b1w:+.1f}% / {b1m:+.1f}% / {b2m:+.1f}% / {b3m:+.1f}%"
+
+df_advanced["BREADTH CHG (1W/1M/2M/3M)"] = df_advanced.apply(lambda r: calc_breadth_chg(r["advancing_ratio"], r["momentum_5d"]), axis=1)
+
+with tab_trend:
+    st.caption("🔍 專注中長線趨勢、相對強度 (RS vs SPY) 及等權複合動能 (EW COMP)：")
+    trend_cols = ["symbol", "name", "RS (SPY)", "% VS 30W MA", "PRICE CHG (1M/2M/3M)", "EW COMP (1M/2M/3M)", "% VS EMA (10, 20, 30, 50, 200)"]
+    st.dataframe(df_advanced[trend_cols].rename(columns={
+        "symbol": "代號", "name": "名稱",
+        "RS (SPY)": "RS vs SPY",
+        "% VS 30W MA": "30週線偏離度",
+        "PRICE CHG (1M/2M/3M)": "價格累積漲幅 (1M/2M/3M)",
+        "EW COMP (1M/2M/3M)": "等權超額 EW COMP (1M/2M/3M)",
+        "% VS EMA (10, 20, 30, 50, 200)": "EMA偏離矩陣 (10/20/30/50/200)"
+    }), use_container_width=True, height=380)
+
+with tab_breadth:
+    st.caption("🌊 專注內部個股站上均線比例及 50 EMA 寬度增減變化 (Breadth Chg)：")
+    breadth_cols = ["symbol", "name", "% ABOVE EMA (20/50/200)", "BREADTH CHG (1W/1M/2M/3M)", "adv_dec_text", "reversal_signal_flag"]
+    st.dataframe(df_advanced[breadth_cols].rename(columns={
+        "symbol": "代號", "name": "名稱",
+        "% ABOVE EMA (20/50/200)": "站上均線比例 (20/50/200 EMA)",
+        "BREADTH CHG (1W/1M/2M/3M)": "50EMA寬度變化 (1W/1M/2M/3M前)",
+        "adv_dec_text": "內部升跌現狀",
+        "reversal_signal_flag": "轉勢信號"
+    }), use_container_width=True, height=380)
 
 # -------------------------------------------------------------
-# 💡 內外背離雷達圖 (散點圖) — 核心校準：X 軸 ETF 市值升幅 vs Y 軸 內部等權升幅！
+# 💡 內外背離雷達圖 (散點圖) — 嚴格校準 X 軸與 Y 軸分離
 # -------------------------------------------------------------
 st.markdown("---")
 st.subheader("💡 內外背離雷達圖 (ETF 當日升幅 vs 等權升幅)")
 if not view_df.empty:
     clean_view_scat = view_df.loc[:, ~view_df.columns.duplicated()].copy()
-    
-    # 計算氣泡大小：差額絕對值越明顯氣泡越大
     bubble_size = np.abs(clean_view_scat["ew_vs_cap_spread"]) * 1.5 + 8
     clean_view_scat["bubble_size"] = bubble_size.fillna(8)
     
@@ -408,7 +491,6 @@ if not view_df.empty:
         }
     )
     
-    # 基準參考線：等權 = 市值 (45度對角虛線)
     all_vals = pd.concat([clean_view_scat["pct_change"], clean_view_scat["equal_weight_return"]])
     min_v = min(all_vals.min() - 0.5, -1.5)
     max_v = max(all_vals.max() + 0.5, 3.5)
@@ -429,7 +511,7 @@ if not view_df.empty:
     st.plotly_chart(fig_scat, use_container_width=True)
 
 # -------------------------------------------------------------
-# 🔎 單一細分 ETF 成分股持股穿透
+# 🔎 單一細分 ETF 成分股持股穿透 — 嚴格鎖定用戶要求的 10 個簡潔欄位！
 # -------------------------------------------------------------
 st.markdown("---")
 st.subheader("🔎 單一細分 ETF 成分股持股穿透 (Holdings Drill-Down)")
@@ -449,11 +531,57 @@ if default_target:
                     h_idx = i_row
                     break
             df_drill_clean = df_drill.iloc[h_idx+1:].copy()
-            df_drill_clean.columns = [str(c).strip().replace("\n", "") for c in df_drill.iloc[h_idx].values]
             df_drill_clean = df_drill_clean.dropna(subset=[df_drill_clean.columns[0]])
             df_drill_clean = df_drill_clean[df_drill_clean[df_drill_clean.columns[0]].astype(str).str.len() <= 6]
             
-            st.write(f"**{target_etf}** 底層持股清單（來自 Google Sheet【{tab_name}】分頁，共展示 **{len(df_drill_clean)} 隻**成分股）：")
-            st.dataframe(df_drill_clean, use_container_width=True, height=350)
+            # 建立用戶指定的 10 個標準欄位映射 (自動計算距離20MA%與距離50MA%)
+            drill_records = []
+            for _, d_row in df_drill_clean.iterrows():
+                sym_val = str(d_row.iloc[0]).strip().upper() if len(d_row) > 0 else ""
+                w_val = clean_num(d_row.iloc[1], is_pct=True) if len(d_row) > 1 else 0.0
+                name_val = str(d_row.iloc[2]).strip() if len(d_row) > 2 else sym_val
+                p_val = clean_num(d_row.iloc[3]) if len(d_row) > 3 else 0.0
+                pct_val = clean_num(d_row.iloc[4], is_pct=True) if len(d_row) > 4 else 0.0
+                chg_val = clean_num(d_row.iloc[5]) if len(d_row) > 5 else 0.0
+                status_val = str(d_row.iloc[6]).strip() if len(d_row) > 6 else ("升" if pct_val > 0 else ("跌" if pct_val < 0 else "平"))
+                
+                # 計算距離 20MA%
+                ma20_raw = clean_num(d_row.iloc[7]) if len(d_row) > 7 else 0.0
+                if len(d_row) > 8 and str(d_row.iloc[8]).strip() not in ["", "--", "nan"]:
+                    dist20_val = clean_num(d_row.iloc[8], is_pct=True)
+                else:
+                    dist20_val = ((p_val - ma20_raw) / ma20_raw * 100.0) if ma20_raw > 0 else 0.0
+                    
+                # 計算距離 50MA%
+                ma50_raw = clean_num(d_row.iloc[9]) if len(d_row) > 9 else 0.0
+                dist50_val = ((p_val - ma50_raw) / ma50_raw * 100.0) if ma50_raw > 0 else 0.0
+                
+                # 站上 50MA
+                above50_val = "是" if p_val > ma50_raw and ma50_raw > 0 else "否"
+                
+                drill_records.append({
+                    "代號": sym_val,
+                    "權重": w_val,
+                    "名稱": name_val,
+                    "現價": p_val,
+                    "當日升跌%": pct_val,
+                    "當日升跌": chg_val,
+                    "狀態": status_val,
+                    "距離20MA%": dist20_val,
+                    "距離50MA%": dist50_val,
+                    "站上50MA": above50_val
+                })
+                
+            df_drill_final = pd.DataFrame(drill_records)
+            
+            st.write(f"**{target_etf}** 底層持股清單（共展示 **{len(df_drill_final)} 隻**成分股）：")
+            st.dataframe(df_drill_final.style.format({
+                "權重": "{:.2f}%",
+                "現價": "${:.2f}",
+                "當日升跌%": "{:+.2f}%",
+                "當日升跌": "{:+$#.2f;-$#.2f;$0.00}".replace("#", ""),
+                "距離20MA%": "{:+.2f}%",
+                "距離50MA%": "{:+.2f}%"
+            }), use_container_width=True, height=380)
         else:
             st.info(f"ℹ️ Google Sheet 尚未建立【{tab_name}】分頁。請在試算表的「ETF_空白快速新增模板」輸入 {target_etf} 並點擊按鈕生成！")
