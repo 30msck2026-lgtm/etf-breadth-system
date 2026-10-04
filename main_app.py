@@ -8,9 +8,6 @@ import re
 
 st.set_page_config(page_title="美股細分行業 ETF 深度監控與市場寬度雷達", page_icon="📈", layout="wide")
 
-# ==============================================================================
-# 0. 配置正確的 Google Sheet ID
-# ==============================================================================
 DEFAULT_SHEET_ID = "1m5Iw5TEGCWDfhnta3Xv83er2j91gIDp56LHWjEjdjxM"
 
 st.sidebar.header("⚙️ 數據庫連線設定")
@@ -35,7 +32,6 @@ sheet_id = extract_sheet_id(raw_input)
 
 @st.cache_data(ttl=15)
 def load_sheet_csv(s_id, sheet_name):
-    """免金鑰安全讀取 Google Sheet 分頁為 DataFrame"""
     if not s_id:
         return None, "請輸入有效的 Google Sheet ID"
         
@@ -56,7 +52,6 @@ def load_sheet_csv(s_id, sheet_name):
 st.title("🏛️ 美股細分行業 ETF 深度監控與市場寬度雷達")
 st.caption("⚡ 數據底層：Google Sheets 即時同步 | 前端界面：互動式量化雷達儀表板")
 
-# 讀取總看板【財報日更新表】
 df_raw, status_msg = load_sheet_csv(sheet_id, "財報日更新表")
 
 if df_raw is None or df_raw.empty:
@@ -64,15 +59,8 @@ if df_raw is None or df_raw.empty:
     ❌ **無法連線至指定的 Google Sheet！**
     
     **請依序檢查以下 2 個最關鍵原因：**
-    
-    1. **試算表「共用權限」尚未公開（最常見原因）：**
-       * 請回到您的 Google 試算表，點擊右上角藍色按鈕 **【共用 (Share)】**。
-       * 在「一般存取權」下方，必須將「受限制」改為：**【知道連結的使用者均可檢視 (Viewer)】**！
-       * 如果保持為「受限制」，Google 會強制跳轉登入畫面，任何外部網頁都無法讀取數據。
-       
-    2. **試算表 ID 是否與當前瀏覽器分頁一致：**
-       * 您目前輸入的 ID 為：`{sheet_id}`
-       * 請直接在 Google 試算表上方網址列將整串網址複製，貼到左側邊欄輸入框中即可。
+    1. 試算表右上角【共用】是否設為 **【知道連結的使用者均可檢視 (Viewer)】**。
+    2. 目前輸入的 ID 為：`{sheet_id}`
     """)
     st.stop()
 
@@ -83,7 +71,7 @@ def clean_num(val):
     except: return 0.0
 
 # -------------------------------------------------------------
-# 1. 精準解析「宏觀大盤層」(SPY, QQQ, IWM, DIA, VIX)
+# 1. 解析宏觀大盤指標
 # -------------------------------------------------------------
 spy_p, spy_c = 0.0, 0.0
 qqq_p, qqq_c = 0.0, 0.0
@@ -107,7 +95,7 @@ for r_idx in range(min(6, len(df_raw))):
             dia_c = clean_num(row_vals[c_idx+2])
 
 # -------------------------------------------------------------
-# 2. 定位主數據表格表頭 (尋找包含「ETF 代號」的那一行)
+# 2. 定位主數據表格表頭並構建絕對乾淨唯一的 DataFrame (避免 DuplicateError)
 # -------------------------------------------------------------
 header_idx = None
 for r_idx in range(min(12, len(df_raw))):
@@ -119,54 +107,61 @@ for r_idx in range(min(12, len(df_raw))):
 if header_idx is None:
     header_idx = 5 if len(df_raw) > 5 else 0
 
-raw_headers = [str(x).strip().replace("\n", "").replace(" ", "") for x in df_raw.iloc[header_idx].values]
-df_metrics = df_raw.iloc[header_idx+1:].copy()
-df_metrics.columns = raw_headers
+row_header_vals = df_raw.iloc[header_idx].values
 
-def find_col(possible_names):
+def get_col_index(possible_names):
     for p in possible_names:
         clean_p = p.replace(" ", "")
-        for col in df_metrics.columns:
-            if clean_p in col:
-                return col
+        for idx, val in enumerate(row_header_vals):
+            if clean_p in str(val).replace(" ", "").replace("\n", ""):
+                return idx
     return None
 
-c_sym = find_col(["ETF代號", "代號", "Symbol", "Ticker"])
-c_name = find_col(["ETF名稱", "名稱", "Name"])
-c_sec = find_col(["大板塊", "板塊", "Sector"])
-c_ind = find_col(["細分子行業", "子行業", "Industry"])
-c_iss = find_col(["發行商", "Issuer"])
-c_price = find_col(["最新現價", "現價", "Price", "收盤價"])
-c_pct = find_col(["當日升幅", "升幅", "漲跌幅", "pct_change"])
-c_ew = find_col(["內部等權升幅", "等權升幅", "等權"])
-c_spread = find_col(["等權差額", "差額", "背離"])
-c_state = find_col(["內部升跌狀態", "升跌狀態", "內部狀態"])
-c_adv = find_col(["上漲佔比", "佔比", "勝率"])
-c_dist = find_col(["距20MA", "偏離度"])
-c_mom = find_col(["5日動量", "動量"])
-c_sig = find_col(["轉勢雷達信號", "轉勢信號", "信號"])
-c_reb = find_col(["調倉月份", "調倉"])
+idx_sym = get_col_index(["ETF代號", "代號", "Symbol"])
+idx_name = get_col_index(["ETF名稱", "名稱", "Name"])
+idx_sec = get_col_index(["大板塊", "板塊", "Sector"])
+idx_ind = get_col_index(["細分子行業", "子行業", "Industry"])
+idx_iss = get_col_index(["發行商", "Issuer"])
+idx_price = get_col_index(["最新現價", "現價", "Price"])
+idx_pct = get_col_index(["當日升幅", "升幅", "漲跌幅"])
+idx_ew = get_col_index(["內部等權升幅", "等權升幅"])
+idx_spread = get_col_index(["等權差額", "差額", "背離"])
+idx_state = get_col_index(["內部升跌狀態", "升跌狀態"])
+idx_adv = get_col_index(["上漲佔比", "佔比"])
+idx_dist = get_col_index(["距20MA", "偏離度"])
+idx_mom = get_col_index(["5日動量", "動量"])
+idx_sig = get_col_index(["轉勢雷達信號", "轉勢信號"])
+idx_reb = get_col_index(["調倉月份", "調倉"])
 
-df_metrics["symbol"] = df_metrics[c_sym].astype(str).str.strip().str.upper() if c_sym else ""
-df_metrics = df_metrics[df_metrics["symbol"].str.len().between(2, 6)]
-df_metrics = df_metrics[~df_metrics["symbol"].str.contains("ETF|代號|--|NAN", na=False)]
+records = []
+for r_i in range(header_idx + 1, len(df_raw)):
+    row = df_raw.iloc[r_i]
+    raw_sym = str(row[idx_sym]).strip().upper() if idx_sym is not None and idx_sym < len(row) else ""
+    if not (2 <= len(raw_sym) <= 6) or any(k in raw_sym for k in ["ETF", "代號", "--", "NAN"]):
+        continue
+        
+    records.append({
+        "symbol": raw_sym,
+        "name": str(row[idx_name]).strip() if idx_name is not None and idx_name < len(row) else raw_sym,
+        "sector": str(row[idx_sec]).strip() if idx_sec is not None and idx_sec < len(row) else "其他",
+        "sub_industry": str(row[idx_ind]).strip() if idx_ind is not None and idx_ind < len(row) else "其他",
+        "issuer": str(row[idx_iss]).strip() if idx_iss is not None and idx_iss < len(row) else "--",
+        "close_price": clean_num(row[idx_price]) if idx_price is not None and idx_price < len(row) else 0.0,
+        "pct_change": clean_num(row[idx_pct]) if idx_pct is not None and idx_pct < len(row) else 0.0,
+        "equal_weight_return": clean_num(row[idx_ew]) if idx_ew is not None and idx_ew < len(row) else 0.0,
+        "ew_vs_cap_spread": clean_num(row[idx_spread]) if idx_spread is not None and idx_spread < len(row) else 0.0,
+        "adv_dec_text": str(row[idx_state]).strip() if idx_state is not None and idx_state < len(row) else "--",
+        "advancing_ratio": clean_num(row[idx_adv]) if idx_adv is not None and idx_adv < len(row) else 0.0,
+        "dist_20ma": clean_num(row[idx_dist]) if idx_dist is not None and idx_dist < len(row) else 0.0,
+        "momentum_5d": clean_num(row[idx_mom]) if idx_mom is not None and idx_mom < len(row) else 0.0,
+        "reversal_signal_flag": str(row[idx_sig]).strip() if idx_sig is not None and idx_sig < len(row) else "常規波動",
+        "調倉月份": str(row[idx_reb]).strip() if idx_reb is not None and idx_reb < len(row) else "--"
+    })
 
-df_metrics["name"] = df_metrics[c_name].astype(str).str.strip() if c_name else df_metrics["symbol"]
-df_metrics["sector"] = df_metrics[c_sec].astype(str).str.strip() if c_sec else "其他"
-df_metrics["sub_industry"] = df_metrics[c_ind].astype(str).str.strip() if c_ind else "其他"
-df_metrics["issuer"] = df_metrics[c_iss].astype(str).str.strip() if c_iss else "--"
-df_metrics["adv_dec_text"] = df_metrics[c_state].astype(str).str.strip() if c_state else "--"
-df_metrics["reversal_signal_flag"] = df_metrics[c_sig].astype(str).str.strip() if c_sig else "常規波動"
-df_metrics["調倉月份"] = df_metrics[c_reb].astype(str).str.strip() if c_reb else "--"
+df_metrics = pd.DataFrame(records)
 
-# 徹底保證以下所有欄位 100% 存在，絕不拋出 KeyError
-df_metrics["close_price"] = df_metrics[c_price].apply(clean_num) if c_price else 0.0
-df_metrics["pct_change"] = df_metrics[c_pct].apply(clean_num) if c_pct else 0.0
-df_metrics["equal_weight_return"] = df_metrics[c_ew].apply(clean_num) if c_ew else 0.0
-df_metrics["ew_vs_cap_spread"] = df_metrics[c_spread].apply(clean_num) if c_spread else 0.0
-df_metrics["advancing_ratio"] = df_metrics[c_adv].apply(clean_num) if c_adv else 0.0
-df_metrics["dist_20ma"] = df_metrics[c_dist].apply(clean_num) if c_dist else 0.0
-df_metrics["momentum_5d"] = df_metrics[c_mom].apply(clean_num) if c_mom else 0.0
+# 確保欄位名稱 100% 唯一
+df_metrics = df_metrics.loc[:, ~df_metrics.columns.duplicated()].copy()
 
 top_c1, top_c2 = st.columns([8, 2])
 with top_c2:
@@ -202,8 +197,13 @@ df_sectors = df_metrics[df_metrics["symbol"].isin(sectors_list)].copy()
 
 if not df_sectors.empty and "pct_change" in df_sectors.columns:
     st.markdown("#### 🧭 11 大核心板塊 (Sectors) 當日資金流向熱力分佈")
+    
+    # 傳給 Plotly 之前明確去重欄位與索引
+    clean_sectors = df_sectors[["symbol", "pct_change", "name"]].copy().reset_index(drop=True)
+    clean_sectors = clean_sectors.sort_values(by="pct_change", ascending=False)
+    
     fig_sector = px.bar(
-        df_sectors.sort_values(by="pct_change", ascending=False),
+        clean_sectors,
         x="symbol", y="pct_change",
         color="pct_change",
         color_continuous_scale="RdYlGn",
@@ -304,17 +304,18 @@ st.dataframe(view_df[screener_cols].rename(columns=rename_map).style.format({
 st.markdown("---")
 st.subheader("💡 內外背離雷達圖 (ETF 當日升幅 vs 等權升幅)")
 if not view_df.empty:
+    clean_view_scat = view_df.loc[:, ~view_df.columns.duplicated()].copy()
     fig_scat = px.scatter(
-        view_df,
+        clean_view_scat,
         x="pct_change", y="equal_weight_return",
         text="symbol", color="advancing_ratio",
         color_continuous_scale="RdYlGn",
-        size=np.abs(view_df["ew_vs_cap_spread"]) + 3,
+        size=np.abs(clean_view_scat["ew_vs_cap_spread"]) + 3,
         hover_data=["name", "sub_industry", "adv_dec_text", "reversal_signal_flag"],
         labels={"pct_change": "ETF 當日升幅 (%)", "equal_weight_return": "內部等權升幅 (%)"}
     )
-    min_v = min(view_df["pct_change"].min(), view_df["equal_weight_return"].min(), -2)
-    max_v = max(view_df["pct_change"].max(), view_df["equal_weight_return"].max(), 2)
+    min_v = min(clean_view_scat["pct_change"].min(), clean_view_scat["equal_weight_return"].min(), -2)
+    max_v = max(clean_view_scat["pct_change"].max(), clean_view_scat["equal_weight_return"].max(), 2)
     fig_scat.add_trace(go.Scatter(x=[min_v, max_v], y=[min_v, max_v], mode="lines", line=dict(dash="dash", color="gray"), name="等權 = 市值"))
     fig_scat.update_traces(textposition="top center")
     fig_scat.update_layout(height=480)
