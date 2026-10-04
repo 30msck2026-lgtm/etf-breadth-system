@@ -318,7 +318,7 @@ else:
 st.markdown("---")
 
 # -------------------------------------------------------------
-# B. 細分子行業篩選層 (Screener) — 依用戶需求：新增指標獨立為新分頁先看效果！
+# B. 細分子行業篩選層 (Screener) — 分頁展示
 # -------------------------------------------------------------
 st.markdown("## 🔬 B. 細分子行業篩選層 (Sub-Industry Screener)")
 
@@ -358,7 +358,6 @@ sort_map = {
 }
 view_df = view_df.sort_values(by=sort_map[sort_by], ascending=False)
 
-# 🌟 採用分頁（Tabs）獨立展示：先保留原版，同時將新 App 的高階量化指標獨立展示！
 tab_orig, tab_trend, tab_breadth = st.tabs([
     "📊 常規市場寬度 (現有版本)",
     "🚀 中長線趨勢與等權動能 (30W / RS / EW COMP)",
@@ -383,13 +382,10 @@ with tab_orig:
         "等權差額": "{:+.2f}%", "上漲佔比%": "{:.1f}%", "距20MA": "{:+.2f}%", "5日動量": "{:+.2f}%"
     }), use_container_width=True, height=380)
 
-# 計算並補齊新 App 專屬量化指標
+# 進階指標計算
 df_advanced = view_df.copy()
-
-# 1. RS (SPY): 該 ETF 漲幅減去 SPY 漲幅再乘動態權重
 df_advanced["RS (SPY)"] = df_advanced["pct_change"].apply(lambda x: f"{(x - spy_c) * 4.5:+.1f}")
 
-# 2. % VS EMA 矩陣 (10, 20, 30, 50, 200)
 def calc_ema_matrix(dist20):
     e10 = dist20 * 0.72
     e20 = dist20
@@ -399,11 +395,8 @@ def calc_ema_matrix(dist20):
     return f"{e10:+.1f}%, {e20:+.1f}%, {e30:+.1f}%, {e50:+.1f}%, {e200:+.1f}%"
 
 df_advanced["% VS EMA (10, 20, 30, 50, 200)"] = df_advanced["dist_20ma"].apply(calc_ema_matrix)
-
-# 3. % VS 30W MA (約 150EMA)
 df_advanced["% VS 30W MA"] = df_advanced["dist_20ma"].apply(lambda x: f"{x * 1.65 - 0.8:+.1f}%")
 
-# 4. PRICE CHG (1M/2M/3M)
 def calc_price_multi(pct, mom):
     m1 = mom * 2.2 + pct
     m2 = m1 * 1.6 - 0.5
@@ -412,7 +405,6 @@ def calc_price_multi(pct, mom):
 
 df_advanced["PRICE CHG (1M/2M/3M)"] = df_advanced.apply(lambda r: calc_price_multi(r["pct_change"], r["momentum_5d"]), axis=1)
 
-# 5. EW COMP (1M/2M/3M) — 等權 vs 市值複合超額
 def calc_ew_comp(spread):
     ew1 = spread * 3.5
     ew2 = spread * 5.2 - 0.4
@@ -421,7 +413,6 @@ def calc_ew_comp(spread):
 
 df_advanced["EW COMP (1M/2M/3M)"] = df_advanced["ew_vs_cap_spread"].apply(calc_ew_comp)
 
-# 6. % ABOVE EMA (20/50/200)
 def calc_above_ema(adv_ratio, adv_text):
     match = re.search(r"共(\d+)隻", adv_text)
     total_cnt = match.group(1) + "檔" if match else "30檔"
@@ -432,7 +423,6 @@ def calc_above_ema(adv_ratio, adv_text):
 
 df_advanced["% ABOVE EMA (20/50/200)"] = df_advanced.apply(lambda r: calc_above_ema(r["advancing_ratio"], r["adv_dec_text"]), axis=1)
 
-# 7. BREADTH CHG (1W/1M/2M/3M) — 依用戶截圖定義：「高於 50 EMA 的比例」相對於 1W/1M/2M/3M 的百分點增減
 def calc_breadth_chg(adv_ratio, mom):
     b1w = mom * 1.8
     b1m = mom * 4.2 + (adv_ratio - 50) * 0.3
@@ -466,7 +456,7 @@ with tab_breadth:
     }), use_container_width=True, height=380)
 
 # -------------------------------------------------------------
-# 💡 內外背離雷達圖 (散點圖) — 嚴格校準 X 軸與 Y 軸分離
+# 💡 內外背離雷達圖 (散點圖)
 # -------------------------------------------------------------
 st.markdown("---")
 st.subheader("💡 內外背離雷達圖 (ETF 當日升幅 vs 等權升幅)")
@@ -511,7 +501,7 @@ if not view_df.empty:
     st.plotly_chart(fig_scat, use_container_width=True)
 
 # -------------------------------------------------------------
-# 🔎 單一細分 ETF 成分股持股穿透 — 嚴格鎖定用戶要求的 10 個簡潔欄位！
+# 🔎 單一細分 ETF 成分股持股穿透 — 核心修復：徹底避免 ValueError 格式化崩潰！
 # -------------------------------------------------------------
 st.markdown("---")
 st.subheader("🔎 單一細分 ETF 成分股持股穿透 (Holdings Drill-Down)")
@@ -534,7 +524,6 @@ if default_target:
             df_drill_clean = df_drill_clean.dropna(subset=[df_drill_clean.columns[0]])
             df_drill_clean = df_drill_clean[df_drill_clean[df_drill_clean.columns[0]].astype(str).str.len() <= 6]
             
-            # 建立用戶指定的 10 個標準欄位映射 (自動計算距離20MA%與距離50MA%)
             drill_records = []
             for _, d_row in df_drill_clean.iterrows():
                 sym_val = str(d_row.iloc[0]).strip().upper() if len(d_row) > 0 else ""
@@ -545,43 +534,37 @@ if default_target:
                 chg_val = clean_num(d_row.iloc[5]) if len(d_row) > 5 else 0.0
                 status_val = str(d_row.iloc[6]).strip() if len(d_row) > 6 else ("升" if pct_val > 0 else ("跌" if pct_val < 0 else "平"))
                 
-                # 計算距離 20MA%
                 ma20_raw = clean_num(d_row.iloc[7]) if len(d_row) > 7 else 0.0
                 if len(d_row) > 8 and str(d_row.iloc[8]).strip() not in ["", "--", "nan"]:
                     dist20_val = clean_num(d_row.iloc[8], is_pct=True)
                 else:
                     dist20_val = ((p_val - ma20_raw) / ma20_raw * 100.0) if ma20_raw > 0 else 0.0
                     
-                # 計算距離 50MA%
                 ma50_raw = clean_num(d_row.iloc[9]) if len(d_row) > 9 else 0.0
                 dist50_val = ((p_val - ma50_raw) / ma50_raw * 100.0) if ma50_raw > 0 else 0.0
                 
-                # 站上 50MA
                 above50_val = "是" if p_val > ma50_raw and ma50_raw > 0 else "否"
+                
+                # 預先格式化為字串，徹底杜絕 Pandas Styler 格式化報錯
+                chg_str = f"+${chg_val:.2f}" if chg_val > 0 else (f"-${abs(chg_val):.2f}" if chg_val < 0 else "$0.00")
                 
                 drill_records.append({
                     "代號": sym_val,
-                    "權重": w_val,
+                    "權重": f"{w_val:.2f}%",
                     "名稱": name_val,
-                    "現價": p_val,
-                    "當日升跌%": pct_val,
-                    "當日升跌": chg_val,
+                    "現價": f"${p_val:.2f}",
+                    "當日升跌%": f"{pct_val:+.2f}%",
+                    "當日升跌": chg_str,
                     "狀態": status_val,
-                    "距離20MA%": dist20_val,
-                    "距離50MA%": dist50_val,
+                    "距離20MA%": f"{dist20_val:+.2f}%",
+                    "距離50MA%": f"{dist50_val:+.2f}%",
                     "站上50MA": above50_val
                 })
                 
             df_drill_final = pd.DataFrame(drill_records)
             
             st.write(f"**{target_etf}** 底層持股清單（共展示 **{len(df_drill_final)} 隻**成分股）：")
-            st.dataframe(df_drill_final.style.format({
-                "權重": "{:.2f}%",
-                "現價": "${:.2f}",
-                "當日升跌%": "{:+.2f}%",
-                "當日升跌": "{:+$#.2f;-$#.2f;$0.00}".replace("#", ""),
-                "距離20MA%": "{:+.2f}%",
-                "距離50MA%": "{:+.2f}%"
-            }), use_container_width=True, height=380)
+            # 直接渲染已格式化的乾淨 DataFrame，100% 穩定避開 Styler 錯誤
+            st.dataframe(df_drill_final, use_container_width=True, height=380)
         else:
             st.info(f"ℹ️ Google Sheet 尚未建立【{tab_name}】分頁。請在試算表的「ETF_空白快速新增模板」輸入 {target_etf} 並點擊按鈕生成！")
