@@ -12,7 +12,7 @@ st.set_page_config(page_title="美股細分行業 ETF 深度監控與市場寬�
 # ==============================================================================
 # 請將下方的 SHEET_ID 替換為您在瀏覽器網址列看到的 Google Sheet 長串代碼
 # 例如: https://docs.google.com/spreadsheets/d/1qd_h5Q768s5_4XPcO8Nqbruvqy4VPOu4OJLm5vQ5ggY/edit
-DEFAULT_SHEET_ID = "1qd_h5Q768s5_4XPcO8Nqbruvqy4VPOu4OJLm5vQ5ggY"
+DEFAULT_SHEET_ID = "1m5Iw5TEGCWDfhnta3Xv83er2j91gIDp56LHWjEjdjxM/edit?gid=603057017#gid=603057017"
 
 # 允許在側邊欄即時切換或覆蓋 Google Sheet ID
 st.sidebar.header("⚙️ 數據庫連線設定")
